@@ -11,7 +11,6 @@ This python package provides a flexible and comprehensive implementation of temp
 
 ```bash
 pip install pytorch-tcn
-pip install pytorch-tcn --no-dependencies  # without the dependencies if you already have PyTorch/Numpy.
 ```
 
 ## How to use the TCN class
