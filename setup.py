@@ -19,6 +19,7 @@ setup(
     version=version,
     description='Pytorch TCN',
     author='Paul Krug',
+    url='https://github.com/paul-krug/pytorch-tcn',
     license='MIT',
     long_description_content_type='text/markdown',
     long_description=open('README.md').read(),
