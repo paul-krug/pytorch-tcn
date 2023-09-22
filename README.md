@@ -1,8 +1,11 @@
 # PyTorch-TCN
 
-Tested with torch 2.0.x (Sep 21, 2023).
+<p align="center">
+  <img src="misc/tcn_images.jpg">
+  <b>Dilated causal (left) and non-causal convolutions (right).</b><br><br>
+</p>
 
-This python package provides a flexible and comprehensive implementation of temporal convolutional neural networks (TCN) in PyTorch analogous to the popular tensorflow/keras package [keras-tcn](https://github.com/philipperemy/keras-tcn). Like keras-tcn, the implementation of pytorch-tcn is based on the TCN architecture presented by [Bai et al.](https://arxiv.org/abs/1803.01271), while also including some features of the original [WaveNet](https://arxiv.org/pdf/1609.03499.pdf) architecture (e.g. skip connections). Unlike keras tcn, pytorch-tcn allows skip connections even in the case of non-equal input and output feature dimensions. Furthermore, additional functions, such as the option for automatic reset of dilation sizes for very deep TCN structures, are built in.
+This python package provides a flexible and comprehensive implementation of temporal convolutional neural networks (TCN) in PyTorch analogous to the popular tensorflow/keras package [keras-tcn](https://github.com/philipperemy/keras-tcn). Like keras-tcn, the implementation of pytorch-tcn is based on the TCN architecture presented by [Bai et al.](https://arxiv.org/abs/1803.01271), while also including some features of the original [WaveNet](https://arxiv.org/pdf/1609.03499.pdf) architecture (e.g. skip connections) and the option for automatic reset of dilation sizes to allow training of very deep TCN structures.
 
 ## Installation
 
@@ -25,10 +28,16 @@ model = TCN(
     use_norm: str = 'weight_norm',
     activation: str = 'relu',
     kernel_initializer: str = 'xavier_uniform',
-    use_skip_connections: bool = True,
+    use_skip_connections: bool = False,
+    input_shape: str = 'NCL',
 )
 # Continue to train/use model for your task
 ```
+
+### Input and Output shapes
+
+The TCN expects input tensors of shape (*N, C<sub>in</sub>, L*), where *N, C<sub>in</sub>, L* denote  the batch size, number of input channels and the sequence length, respectively. This corresponds to the input shape that is expected by 1D convolution in PyTorch. If you prefer the more common convention for time series data (*N, L, C<sub>in</sub>*) you can change the expected input shape via the 'input_shape' parameter, see below for details.
+The order of output dimensions will be the same as for the input tensors.
 
 ### Parameters and how to choose meaningful values
 
@@ -42,4 +51,5 @@ model = TCN(
 - `use_norm`: Can be 'weight_norm', 'batch_norm', 'layer_norm' or 'None'. Uses the respective normalization within the resiudal blocks. The default is weight normalization as done in the original paper by [Bai et al.](https://arxiv.org/abs/1803.01271) Whether the other types of normalization work better in your task is difficult to say in advance so it should be tested on case by case basis. If 'None', no normalization is performed.
 - `activation`: Activation function to use throughout the network. Defaults to 'relu', similar to the original paper.
 - `kernel_initializer`: The function used for initializing the networks weights. Currently, can be 'uniform', 'normal', 'kaiming_uniform', 'kaiming_normal', 'xavier_uniform' or 'xavier_normal'. Kaiming and xavier initialization are also known as He and Glorot initialization, respectively. While [Bai et al.](https://arxiv.org/abs/1803.01271) originally use normal initialization, this sometimes leads to divergent behaviour and usually 'xavier_uniform' is a very good starting point, so it is used as the default here.
-- `use_skip_connections`: If 'True', skip connections will be present from the output of each residual block (before the sum with the resiual, similar to WaveNet) to the end of the network, where all the connections are summed. The sum then passes another activation function. If the output of a residual block has a feature dimension different from the feature dimension of the last residual block, the respective skip connection will use a 1x1 convolution for downsampling the feature dimension. This procedure is similar to the way resiudal connections around each residual block are handled. Skip connections usually help to train deeper netowrks efficiently, so they should be used unless you experience a drop in performance.
+- `use_skip_connections`: If 'True', skip connections will be present from the output of each residual block (before the sum with the resiual, similar to WaveNet) to the end of the network, where all the connections are summed. The sum then passes another activation function. If the output of a residual block has a feature dimension different from the feature dimension of the last residual block, the respective skip connection will use a 1x1 convolution for downsampling the feature dimension. This procedure is similar to the way resiudal connections around each residual block are handled. Skip connections usually help to train deeper netowrks efficiently. However, the parameter defaults to 'False', because skip connections were not used in the original paper by [Bai et al.](https://arxiv.org/abs/1803.01271)
+- `ìnput_shape`: Defaults to 'NCL', which means input tensors are expected to have the shape (batch_size, feature_channels, time_steps). This corresponds to the input shape that is expected by 1D convolutions in PyTorch. However, a common convention for timeseries data is the shape (batch_size, time_steps, feature_channels). If you want to use this convention, set the parameter to 'NLC'.
