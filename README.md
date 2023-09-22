@@ -1,7 +1,7 @@
 # PyTorch-TCN
 
 <p align="center">
-  <img src="https://github.com/paul-krug/pytorch-tcn/blob/main/misc/tcn_images.jpg">
+  <img src="https://raw.githubusercontent.com/paul-krug/pytorch-tcn/main/misc/tcn_images.jpg">
   <b>Dilated causal (left) and non-causal convolutions (right).</b><br><br>
 </p>
 
