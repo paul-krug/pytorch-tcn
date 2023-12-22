@@ -152,15 +152,24 @@ class TemporalBlock(nn.Module):
             use_norm,
             activation,
             kerner_initializer,
+            embedding_shapes,
+            use_gate,
             ):
         super(TemporalBlock, self).__init__()
         self.use_norm = use_norm
         self.activation_name = activation
         self.kernel_initializer = kerner_initializer
+        self.embedding_shapes = embedding_shapes
+        self.use_gate = use_gate
+
+        if self.use_gate:
+            conv1d_n_outputs = 2 * n_outputs
+        else:
+            conv1d_n_outputs = n_outputs
 
         self.conv1 = TemporalConv1d(
             in_channels=n_inputs,
-            out_channels=n_outputs,
+            out_channels=conv1d_n_outputs,
             kernel_size=kernel_size,
             stride=stride,
             dilation=dilation,
@@ -196,6 +205,27 @@ class TemporalBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
+
+        if self.embedding_shapes is not None:
+            self.embedding_modules = nn.ModuleList()
+            if self.use_gate:
+                embedding_layer_n_outputs = 2 * n_outputs
+            else:
+                embedding_layer_n_outputs = n_outputs
+            for shape in self.embedding_shapes:
+
+                embedding_layer = nn.Linear(
+                    shape[0],
+                    embedding_layer_n_outputs,
+                    )
+                embedding_layer = weight_norm( embedding_layer )
+                self.embedding_modules.append( embedding_layer )
+            self.embedding_projection = nn.Linear(
+                len( self.embedding_shapes )*embedding_layer_n_outputs,
+                embedding_layer_n_outputs,
+                )
+            
+        self.glu = nn.GLU(dim=1)
         
         self.init_weights()
         return
@@ -232,11 +262,51 @@ class TemporalBlock(nn.Module):
             x = norm_fn( x.transpose(1, 2) )
             x = x.transpose(1, 2)
         return x
+    
+    def apply_embeddings(
+            self,
+            x,
+            embeddings,
+            ):
+        
+        if not isinstance( embeddings, list ):
+            embeddings = [ embeddings ]
 
-    def forward(self, x):
+        e = []
+        for embedding, module in zip( embeddings, self.embedding_modules ):
+            #print('shapes:', embedding.shape, module.weight.shape)
+            if embedding.shape[1] != module.weight.shape[1]:
+                raise ValueError(
+                    f"""
+                    Embedding shape {embedding.shape} does not match
+                    module shape {module.weight.shape}
+                    """
+                    )
+            e.append( module( embedding ) )
+        e = torch.cat( e, dim=1 )
+        e = self.embedding_projection( e )
+        # unsqueeze time dimension of e and repeat it to match x
+        e = e.unsqueeze(2).repeat(1, 1, x.shape[2])
+        #print('shapes:', e.shape, x.shape)
+        x = x + e
+
+        return x
+    
+    def forward(
+            self,
+            x,
+            embeddings,
+            ):
         out = self.conv1(x)
         out = self.apply_norm( self.norm1, out )
-        out = self.activation1(out)
+
+        if embeddings is not None:
+            out = self.apply_embeddings( out, embeddings )
+
+        if self.use_gate:
+            out = self.glu(out)
+        else:
+            out = self.activation1(out)
         out = self.dropout1(out)
 
         out = self.conv2(out)
@@ -264,6 +334,8 @@ class TCN(nn.Module):
             kernel_initializer: str = 'xavier_uniform',
             use_skip_connections: bool = False,
             input_shape: str = 'NCL',
+            embedding_shapes: Optional[ ArrayLike ] = None,
+            use_gate: bool = False,
             ):
         super(TCN, self).__init__()
         if dilations is not None and len(dilations) != len(num_channels):
@@ -307,6 +379,30 @@ class TCN(nn.Module):
         self.kernel_initializer = kernel_initializer
         self.use_skip_connections = use_skip_connections
         self.input_shape = input_shape
+        self.embedding_shapes = embedding_shapes
+        self.use_gate = use_gate
+
+        if embedding_shapes is not None:
+            if isinstance(embedding_shapes, list):
+                for shape in embedding_shapes:
+                    if not isinstance( shape, tuple ):
+                        raise ValueError(
+                            f"Argument 'embedding_shapes' must be a list of tuples, "
+                            f"but contains {type(shape)}"
+                            )
+                    if len( shape ) not in [ 1, 2 ]:
+                        raise ValueError(
+                            f"""
+                            Tuples in argument 'embedding_shapes' must be of length 1 or 2.
+                            One-dimensional tuples are interpreted as (embedding_dim,) and
+                            two-dimensional tuples as (embedding_dim, time_steps).
+                            """
+                            )
+            else:
+                raise ValueError(
+                    f"Argument 'embedding_shapes' must be a list of tuples, "
+                    f"but is {type(embedding_shapes)}"
+                    )
 
         if use_skip_connections:
             self.downsample_skip_connection = nn.ModuleList()
@@ -344,6 +440,8 @@ class TCN(nn.Module):
                     use_norm=use_norm,
                     activation=activation,
                     kerner_initializer=self.kernel_initializer,
+                    embedding_shapes=self.embedding_shapes,
+                    use_gate=self.use_gate,
                     )
                 ]
 
@@ -363,7 +461,11 @@ class TCN(nn.Module):
                     )
         return
 
-    def forward(self, x):
+    def forward(
+            self,
+            x,
+            embeddings=None,
+            ):
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         if self.use_skip_connections:
@@ -381,7 +483,8 @@ class TCN(nn.Module):
             x = self.activation_out( x )
         else:
             for layer in self.network:
-                x, _ = layer(x)
+                #print( 'TCN, embeddings:', embeddings.shape )
+                x, _ = layer( x, embeddings )
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x
