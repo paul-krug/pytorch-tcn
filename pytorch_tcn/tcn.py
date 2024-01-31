@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.nn.utils import weight_norm
 import numpy as np
 import warnings
+import omegaconf
 
 from typing import Tuple
 from typing import Union
@@ -383,6 +384,9 @@ class TCN(nn.Module):
         self.use_gate = use_gate
 
         if embedding_shapes is not None:
+            if isinstance(embedding_shapes, omegaconf.listconfig.ListConfig):
+                embedding_shapes = [tuple( shape ) for shape in omegaconf.OmegaConf.to_container(embedding_shapes)]
+
             if isinstance(embedding_shapes, list):
                 for shape in embedding_shapes:
                     if not isinstance( shape, tuple ):
