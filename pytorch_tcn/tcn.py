@@ -252,7 +252,10 @@ class TemporalBlock(nn.Module):
             self.norm1 = nn.BatchNorm1d(n_outputs)
             self.norm2 = nn.BatchNorm1d(n_outputs)
         elif use_norm == 'layer_norm':
-            self.norm1 = nn.LayerNorm(n_outputs)
+            if self.use_gate:
+                self.norm1 = nn.LayerNorm(2 * n_outputs)
+            else:
+                self.norm1 = nn.LayerNorm(n_outputs)
             self.norm2 = nn.LayerNorm(n_outputs)
         elif use_norm == 'weight_norm':
             self.norm1 = None
