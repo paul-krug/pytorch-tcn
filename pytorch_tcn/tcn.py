@@ -187,8 +187,10 @@ class TemporalBlock(nn.Module):
             )
         
         if use_norm == 'batch_norm':
-            self.norm1 = nn.BatchNorm1d(n_outputs)
-            self.norm2 = nn.BatchNorm1d(n_outputs)
+            if self.use_gate:
+                self.norm1 = nn.BatchNorm1d(2 * n_outputs)
+            else:
+                self.norm2 = nn.BatchNorm1d(n_outputs)
         elif use_norm == 'layer_norm':
             if self.use_gate:
                 self.norm1 = nn.LayerNorm(2 * n_outputs)
@@ -480,7 +482,7 @@ class TCN(nn.Module):
             # Adding skip connections from each layer to the output
             # Excluding the last layer, as it would not skip trainable weights
             for index, layer in enumerate( self.network ):
-                x, skip_out = layer(x)
+                x, skip_out = layer(x, embeddings )
                 if self.downsample_skip_connection[ index ] is not None:
                     skip_out = self.downsample_skip_connection[ index ]( skip_out )
                 if index < len( self.network ) - 1:
