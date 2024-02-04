@@ -75,6 +75,72 @@ def get_kernel_init_fn(
 
 
 
+class CausalConv1d(nn.Conv1d):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride = 1,
+            dilation = 1,
+            groups = 1,
+            bias = True,
+            buffer = None,
+            **kwargs,
+            ):
+        
+        super(CausalConv1d, self).__init__(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            padding = 0,
+            dilation = dilation,
+            groups = groups,
+            bias = bias,
+            **kwargs,
+            )
+        
+        self.pad_len = (kernel_size - 1) * dilation
+        
+        if buffer is None:
+            buffer = torch.zeros(
+                1,
+                in_channels,
+                self.pad_len,
+                )
+            
+        self.register_buffer(
+            'buffer',
+            buffer,
+            )
+        
+        return
+
+    def forward(self, x):
+        p = nn.ConstantPad1d(
+            (self.pad_len, 0),
+            0.0,
+            )
+        x = p(x)
+        x = super().forward(x)
+        return x
+    
+    def inference(self, x):
+        x = torch.cat(
+            (self.buffer, x),
+            -1,
+            )
+        self.buffer = x[:, :, -self.pad_len:]
+        x = super().forward(x)
+        return x
+    
+    def reset_buffer(self):
+        self.buffer.zero_()
+        return
+
+
+
 class TemporalConv1d(nn.Conv1d):
     def __init__(
             self,
@@ -85,10 +151,10 @@ class TemporalConv1d(nn.Conv1d):
             dilation=1,
             groups=1,
             bias=True,
-            causal=True,
+            **kwargs,
             ):
         
-        padding = (kernel_size-1) * dilation# if causal else 0
+        padding = ((kernel_size-1) * dilation) // 2
 
         super(TemporalConv1d, self).__init__(
             in_channels,
@@ -99,41 +165,20 @@ class TemporalConv1d(nn.Conv1d):
             dilation,
             groups,
             bias,
+            **kwargs,
             )
         
-        self.causal = causal
         return
     
-    def forward(self, input):
-        if self.causal:
-            x = F.conv1d(
-                input,
-                self.weight,
-                self.bias,
-                self.stride,
-                self.padding,
-                self.dilation,
-                self.groups,
-                )
-            # Chomp the output to have left padding only (causal padding)
-            x = x[:, :, :-self.padding[0]].contiguous()
-        else:
-            # Implementation of 'same'-type padding (non-causal padding)
+    def forward(self, x):
+        # Implementation of 'same'-type padding (non-causal padding)
     
-            # Check if padding has odd length
-            # If so, pad the input one more on the right side
-            if (self.padding[0] % 2 != 0):
-                input = F.pad(input, [0, 1])
+        # Check if padding has odd length
+        # If so, pad the input one more on the right side
+        if (self.padding[0] % 2 != 0):
+            x = F.pad(x, [0, 1])
 
-            x = F.conv1d(
-                input,
-                self.weight,
-                self.bias,
-                self.stride,
-                padding=self.padding[0]//2,
-                dilation=self.dilation,
-                groups=self.groups,
-                )
+        x = super(TemporalConv1d, self).forward(x)
 
         return x
 
@@ -161,29 +206,46 @@ class TemporalBlock(nn.Module):
         self.kernel_initializer = kerner_initializer
         self.embedding_shapes = embedding_shapes
         self.use_gate = use_gate
+        self.causal = causal
 
         if self.use_gate:
             conv1d_n_outputs = 2 * n_outputs
         else:
             conv1d_n_outputs = n_outputs
 
-        self.conv1 = TemporalConv1d(
-            in_channels=n_inputs,
-            out_channels=conv1d_n_outputs,
-            kernel_size=kernel_size,
-            stride=stride,
-            dilation=dilation,
-            causal=causal,
-            )
+        if self.causal:
+            self.conv1 = CausalConv1d(
+                in_channels=n_inputs,
+                out_channels=conv1d_n_outputs,
+                kernel_size=kernel_size,
+                stride=stride,
+                dilation=dilation,
+                )
 
-        self.conv2 = TemporalConv1d(
-            in_channels=n_outputs,
-            out_channels=n_outputs,
-            kernel_size=kernel_size,
-            stride=stride,
-            dilation=dilation,
-            causal=causal,
-            )
+            self.conv2 = CausalConv1d(
+                in_channels=n_outputs,
+                out_channels=n_outputs,
+                kernel_size=kernel_size,
+                stride=stride,
+                dilation=dilation,
+                )
+
+        else:
+            self.conv1 = TemporalConv1d(
+                in_channels=n_inputs,
+                out_channels=conv1d_n_outputs,
+                kernel_size=kernel_size,
+                stride=stride,
+                dilation=dilation,
+                )
+
+            self.conv2 = TemporalConv1d(
+                in_channels=n_outputs,
+                out_channels=n_outputs,
+                kernel_size=kernel_size,
+                stride=stride,
+                dilation=dilation,
+                )
         
         if use_norm == 'batch_norm':
             self.norm1 = nn.BatchNorm1d(n_outputs)
@@ -204,7 +266,7 @@ class TemporalBlock(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         
-        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
+        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1, padding=0) if n_inputs != n_outputs else None
 
         if self.embedding_shapes is not None:
             self.embedding_modules = nn.ModuleList()
@@ -316,6 +378,39 @@ class TemporalBlock(nn.Module):
 
         res = x if self.downsample is None else self.downsample(x)
         return self.activation_final(out + res), out
+    
+    def inference(
+            self,
+            x,
+            embeddings,
+            ):
+        if not self.causal:
+            raise ValueError(
+                """
+                This streaming inference mode is made for blockwise causal
+                processing and thus, is only supported for causal networks.
+                However, you selected a non-causal network.
+                """
+                )
+        out = self.conv1.inference(x)
+        out = self.apply_norm( self.norm1, out )
+
+        if embeddings is not None:
+            out = self.apply_embeddings( out, embeddings )
+
+        if self.use_gate:
+            out = self.glu(out)
+        else:
+            out = self.activation1(out)
+        out = self.dropout1(out)
+
+        out = self.conv2.inference(out)
+        out = self.apply_norm( self.norm2, out )
+        out = self.activation2(out)
+        out = self.dropout2(out)
+
+        res = x if self.downsample is None else self.downsample(x)
+        return self.activation_final(out + res), out
 
 
 
@@ -381,6 +476,7 @@ class TCN(nn.Module):
         self.input_shape = input_shape
         self.embedding_shapes = embedding_shapes
         self.use_gate = use_gate
+        self.causal = causal
 
         if embedding_shapes is not None:
             if isinstance(embedding_shapes, list):
@@ -485,6 +581,43 @@ class TCN(nn.Module):
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
                 x, _ = layer( x, embeddings )
+        if self.input_shape == 'NLC':
+            x = x.transpose(1, 2)
+        return x
+    
+    def inference(
+            self,
+            x,
+            embeddings=None,
+            ):
+        if not self.causal:
+            raise ValueError(
+                """
+                This streaming inference mode is made for blockwise causal
+                processing and thus, is only supported for causal networks.
+                However, you selected a non-causal network.
+                """
+                )
+        
+        if self.input_shape == 'NLC':
+            x = x.transpose(1, 2)
+        if self.use_skip_connections:
+            skip_connections = []
+            # Adding skip connections from each layer to the output
+            # Excluding the last layer, as it would not skip trainable weights
+            for index, layer in enumerate( self.network ):
+                x, skip_out = layer.inference(x, embeddings)
+                if self.downsample_skip_connection[ index ] is not None:
+                    skip_out = self.downsample_skip_connection[ index ]( skip_out )
+                if index < len( self.network ) - 1:
+                    skip_connections.append( skip_out )
+            skip_connections.append( x )
+            x = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
+            x = self.activation_out( x )
+        else:
+            for layer in self.network:
+                #print( 'TCN, embeddings:', embeddings.shape )
+                x, _ = layer.inference( x, embeddings )
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x
