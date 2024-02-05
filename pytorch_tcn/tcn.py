@@ -542,6 +542,9 @@ class TCN(nn.Module):
                 ]
 
         self.network = nn.ModuleList(layers)
+
+        if self.causal:
+            self.reset_buffers()
         return
     
     def init_skip_connection_weights(self):
@@ -621,3 +624,10 @@ class TCN(nn.Module):
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x
+    
+    def reset_buffers(self):
+        def _reset_buffer(x):
+            if isinstance(x, CausalConv1d):
+                x.reset_buffer()
+        self.apply(_reset_buffer)
+        return
