@@ -154,17 +154,17 @@ class TemporalConv1d(nn.Conv1d):
             **kwargs,
             ):
         
-        padding = ((kernel_size-1) * dilation) // 2
+        self.pad_len = (kernel_size-1) * dilation
 
         super(TemporalConv1d, self).__init__(
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            groups,
-            bias,
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            padding = self.pad_len // 2,
+            dilation = dilation,
+            groups = groups,
+            bias = bias,
             **kwargs,
             )
         
@@ -173,9 +173,9 @@ class TemporalConv1d(nn.Conv1d):
     def forward(self, x):
         # Implementation of 'same'-type padding (non-causal padding)
     
-        # Check if padding has odd length
+        # Check if pad_len is an odd value
         # If so, pad the input one more on the right side
-        if (self.padding[0] % 2 != 0):
+        if (self.pad_len % 2 != 0):
             x = F.pad(x, [0, 1])
 
         x = super(TemporalConv1d, self).forward(x)
