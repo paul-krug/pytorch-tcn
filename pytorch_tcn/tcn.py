@@ -9,7 +9,7 @@ from typing import Tuple
 from typing import Union
 from typing import Optional
 from numpy.typing import ArrayLike
-
+from collections.abc import Iterable
 
 
 activation_fn = dict(
@@ -186,10 +186,15 @@ class TemporalBlock(nn.Module):
             )
         
         if use_norm == 'batch_norm':
-            self.norm1 = nn.BatchNorm1d(n_outputs)
-            self.norm2 = nn.BatchNorm1d(n_outputs)
+            if self.use_gate:
+                self.norm1 = nn.BatchNorm1d(2 * n_outputs)
+            else:
+                self.norm2 = nn.BatchNorm1d(n_outputs)
         elif use_norm == 'layer_norm':
-            self.norm1 = nn.LayerNorm(n_outputs)
+            if self.use_gate:
+                self.norm1 = nn.LayerNorm(2 * n_outputs)
+            else:
+                self.norm1 = nn.LayerNorm(n_outputs)
             self.norm2 = nn.LayerNorm(n_outputs)
         elif use_norm == 'weight_norm':
             self.norm1 = None
@@ -383,13 +388,16 @@ class TCN(nn.Module):
         self.use_gate = use_gate
 
         if embedding_shapes is not None:
-            if isinstance(embedding_shapes, list):
+            if isinstance(embedding_shapes, Iterable):
                 for shape in embedding_shapes:
                     if not isinstance( shape, tuple ):
-                        raise ValueError(
-                            f"Argument 'embedding_shapes' must be a list of tuples, "
-                            f"but contains {type(shape)}"
-                            )
+                        try:
+                            shape = tuple( shape )
+                        except Exception as e:
+                            raise ValueError(
+                                f"Each shape in argument 'embedding_shapes' must be an Iterable of tuples. "
+                                f"Tried to convert {shape} to tuple, but failed with error: {e}"
+                                )
                     if len( shape ) not in [ 1, 2 ]:
                         raise ValueError(
                             f"""
@@ -473,7 +481,7 @@ class TCN(nn.Module):
             # Adding skip connections from each layer to the output
             # Excluding the last layer, as it would not skip trainable weights
             for index, layer in enumerate( self.network ):
-                x, skip_out = layer(x)
+                x, skip_out = layer(x, embeddings )
                 if self.downsample_skip_connection[ index ] is not None:
                     skip_out = self.downsample_skip_connection[ index ]( skip_out )
                 if index < len( self.network ) - 1:
