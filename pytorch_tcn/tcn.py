@@ -9,7 +9,7 @@ from typing import Tuple
 from typing import Union
 from typing import Optional
 from numpy.typing import ArrayLike
-
+from collections.abc import Iterable
 
 
 activation_fn = dict(
@@ -388,17 +388,16 @@ class TCN(nn.Module):
         self.use_gate = use_gate
 
         if embedding_shapes is not None:
-            if not isinstance(embedding_shapes, list):
-                # Allow for yaml config file instantiation
-                embedding_shapes = [tuple( shape ) for shape in embedding_shapes]
-
-            if isinstance(embedding_shapes, list):
+            if isinstance(embedding_shapes, Iterable):
                 for shape in embedding_shapes:
                     if not isinstance( shape, tuple ):
-                        raise ValueError(
-                            f"Argument 'embedding_shapes' must be a list of tuples, "
-                            f"but contains {type(shape)}"
-                            )
+                        try:
+                            shape = tuple( shape )
+                        except Exception as e:
+                            raise ValueError(
+                                f"Each shape in argument 'embedding_shapes' must be a list of tuples. "
+                                f"Tried to convert {shape} to tuple, but failed with error: {e}"
+                                )
                     if len( shape ) not in [ 1, 2 ]:
                         raise ValueError(
                             f"""
