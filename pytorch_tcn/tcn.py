@@ -395,7 +395,7 @@ class TCN(nn.Module):
                             shape = tuple( shape )
                         except Exception as e:
                             raise ValueError(
-                                f"Each shape in argument 'embedding_shapes' must be a list of tuples. "
+                                f"Each shape in argument 'embedding_shapes' must be an Iterable of tuples. "
                                 f"Tried to convert {shape} to tuple, but failed with error: {e}"
                                 )
                     if len( shape ) not in [ 1, 2 ]:
