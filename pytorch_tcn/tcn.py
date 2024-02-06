@@ -201,6 +201,9 @@ class TemporalBlock(nn.Module):
             self.norm2 = None
             self.conv1 = weight_norm(self.conv1)
             self.conv2 = weight_norm(self.conv2)
+        elif use_norm is None:
+            self.norm1 = None
+            self.norm2 = None
 
         self.activation1 = activation_fn[ self.activation_name ]()
         self.activation2 = activation_fn[ self.activation_name ]()
@@ -346,10 +349,10 @@ class TCN(nn.Module):
         if dilations is not None and len(dilations) != len(num_channels):
             raise ValueError("Length of dilations must match length of num_channels")
         
-        allowed_norm_values = ['batch_norm', 'layer_norm', 'weight_norm', None]
-        if use_norm not in allowed_norm_values:
+        self.allowed_norm_values = ['batch_norm', 'layer_norm', 'weight_norm', None]
+        if use_norm not in self.allowed_norm_values:
             raise ValueError(
-                f"Argument 'use_norm' must be one of: {allowed_norm_values}"
+                f"Argument 'use_norm' must be one of: {self.allowed_norm_values}"
                 )
         
         if activation not in activation_fn.keys():
@@ -362,10 +365,10 @@ class TCN(nn.Module):
                 f"Argument 'kernel_initializer' must be one of: {kernel_init_fn.keys()}"
                 )
         
-        allowed_input_shapes = ['NCL', 'NLC']
-        if input_shape not in allowed_input_shapes:
+        self.allowed_input_shapes = ['NCL', 'NLC']
+        if input_shape not in self.allowed_input_shapes:
             raise ValueError(
-                f"Argument 'input_shape' must be one of: {allowed_input_shapes}"
+                f"Argument 'input_shape' must be one of: {self.allowed_input_shapes}"
                 )
 
         if dilations is None:
