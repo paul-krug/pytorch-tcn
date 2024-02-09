@@ -9,7 +9,7 @@ from typing import Tuple
 from typing import Union
 from typing import Optional
 from numpy.typing import ArrayLike
-
+from collections.abc import Iterable
 
 
 activation_fn = dict(
@@ -152,15 +152,26 @@ class TemporalBlock(nn.Module):
             use_norm,
             activation,
             kerner_initializer,
+            embedding_shapes,
+            embedding_mode,
+            use_gate,
             ):
         super(TemporalBlock, self).__init__()
         self.use_norm = use_norm
         self.activation_name = activation
         self.kernel_initializer = kerner_initializer
+        self.embedding_shapes = embedding_shapes
+        self.embedding_mode = embedding_mode
+        self.use_gate = use_gate
+
+        if self.use_gate:
+            conv1d_n_outputs = 2 * n_outputs
+        else:
+            conv1d_n_outputs = n_outputs
 
         self.conv1 = TemporalConv1d(
             in_channels=n_inputs,
-            out_channels=n_outputs,
+            out_channels=conv1d_n_outputs,
             kernel_size=kernel_size,
             stride=stride,
             dilation=dilation,
@@ -177,10 +188,16 @@ class TemporalBlock(nn.Module):
             )
         
         if use_norm == 'batch_norm':
-            self.norm1 = nn.BatchNorm1d(n_outputs)
+            if self.use_gate:
+                self.norm1 = nn.BatchNorm1d(2 * n_outputs)
+            else:
+                self.norm1 = nn.BatchNorm1d(n_outputs)
             self.norm2 = nn.BatchNorm1d(n_outputs)
         elif use_norm == 'layer_norm':
-            self.norm1 = nn.LayerNorm(n_outputs)
+            if self.use_gate:
+                self.norm1 = nn.LayerNorm(2 * n_outputs)
+            else:
+                self.norm1 = nn.LayerNorm(n_outputs)
             self.norm2 = nn.LayerNorm(n_outputs)
         elif use_norm == 'weight_norm':
             self.norm1 = None
@@ -199,6 +216,26 @@ class TemporalBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
+
+        if self.embedding_shapes is not None:
+            if self.use_gate:
+                embedding_layer_n_outputs = 2 * n_outputs
+            else:
+                embedding_layer_n_outputs = n_outputs
+
+            self.embedding_projection_1 = nn.Conv1d(
+                in_channels = sum( [ shape[0] for shape in self.embedding_shapes ] ),
+                out_channels = embedding_layer_n_outputs,
+                kernel_size = 1,
+                )
+            
+            self.embedding_projection_2 = nn.Conv1d(
+                in_channels = 2 * embedding_layer_n_outputs,
+                out_channels = embedding_layer_n_outputs,
+                kernel_size = 1,
+                )
+            
+        self.glu = nn.GLU(dim=1)
         
         self.init_weights()
         return
@@ -235,11 +272,66 @@ class TemporalBlock(nn.Module):
             x = norm_fn( x.transpose(1, 2) )
             x = x.transpose(1, 2)
         return x
+    
+    def apply_embeddings(
+            self,
+            x,
+            embeddings,
+            ):
+        
+        if not isinstance( embeddings, list ):
+            embeddings = [ embeddings ]
 
-    def forward(self, x):
+        e = []
+        for embedding, expected_shape in zip( embeddings, self.embedding_shapes ):
+            if embedding.shape[1] != expected_shape[0]:
+                raise ValueError(
+                    f"""
+                    Embedding shape {embedding.shape} passed to 'forward' does not 
+                    match the expected shape {expected_shape} provided as input argument
+                    'embedding_shapes'.
+                    """
+                    )
+            if len( embedding.shape ) == 2:
+                # unsqueeze time dimension of e and repeat it to match x
+                e.append( embedding.unsqueeze(2).repeat(1, 1, x.shape[2]) )
+            elif len( embedding.shape ) == 3:
+                # check if time dimension of embedding matches x
+                if embedding.shape[2] != x.shape[2]:
+                    raise ValueError(
+                        f"""
+                        Embedding time dimension {embedding.shape[2]} does not match
+                        input time dimension {x.shape[2]}
+                        """
+                        )
+                e.append( embedding )
+        e = torch.cat( e, dim=1 )
+        e = self.embedding_projection_1( e )
+        #print('shapes:', e.shape, x.shape)
+        if self.embedding_mode == 'concat':
+            x = self.embedding_projection_2(
+                torch.cat( [ x, e ], dim=1 )
+                )
+        elif self.embedding_mode == 'add':
+            x = x + e
+
+        return x
+    
+    def forward(
+            self,
+            x,
+            embeddings,
+            ):
         out = self.conv1(x)
         out = self.apply_norm( self.norm1, out )
-        out = self.activation1(out)
+
+        if embeddings is not None:
+            out = self.apply_embeddings( out, embeddings )
+
+        if self.use_gate:
+            out = self.glu(out)
+        else:
+            out = self.activation1(out)
         out = self.dropout1(out)
 
         out = self.conv2(out)
@@ -267,6 +359,9 @@ class TCN(nn.Module):
             kernel_initializer: str = 'xavier_uniform',
             use_skip_connections: bool = False,
             input_shape: str = 'NCL',
+            embedding_shapes: Optional[ ArrayLike ] = None,
+            embedding_mode: str = 'add',
+            use_gate: bool = False,
             ):
         super(TCN, self).__init__()
         if dilations is not None and len(dilations) != len(num_channels):
@@ -310,6 +405,39 @@ class TCN(nn.Module):
         self.kernel_initializer = kernel_initializer
         self.use_skip_connections = use_skip_connections
         self.input_shape = input_shape
+        self.embedding_shapes = embedding_shapes
+        self.use_gate = use_gate
+
+        if embedding_shapes is not None:
+            if isinstance(embedding_shapes, Iterable):
+                for shape in embedding_shapes:
+                    if not isinstance( shape, tuple ):
+                        try:
+                            shape = tuple( shape )
+                        except Exception as e:
+                            raise ValueError(
+                                f"Each shape in argument 'embedding_shapes' must be an Iterable of tuples. "
+                                f"Tried to convert {shape} to tuple, but failed with error: {e}"
+                                )
+                    if len( shape ) not in [ 1, 2 ]:
+                        raise ValueError(
+                            f"""
+                            Tuples in argument 'embedding_shapes' must be of length 1 or 2.
+                            One-dimensional tuples are interpreted as (embedding_dim,) and
+                            two-dimensional tuples as (embedding_dim, time_steps).
+                            """
+                            )
+            else:
+                raise ValueError(
+                    f"Argument 'embedding_shapes' must be a list of tuples, "
+                    f"but is {type(embedding_shapes)}"
+                    )
+            
+        if embedding_mode not in [ 'add', 'concat' ]:
+            raise ValueError(
+                f"Argument 'embedding_mode' must be one of: ['add', 'concat']"
+                )
+        self.embedding_mode = embedding_mode
 
         if use_skip_connections:
             self.downsample_skip_connection = nn.ModuleList()
@@ -347,6 +475,9 @@ class TCN(nn.Module):
                     use_norm=use_norm,
                     activation=activation,
                     kerner_initializer=self.kernel_initializer,
+                    embedding_shapes=self.embedding_shapes,
+                    embedding_mode=self.embedding_mode,
+                    use_gate=self.use_gate,
                     )
                 ]
 
@@ -366,7 +497,11 @@ class TCN(nn.Module):
                     )
         return
 
-    def forward(self, x):
+    def forward(
+            self,
+            x,
+            embeddings=None,
+            ):
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         if self.use_skip_connections:
@@ -374,7 +509,7 @@ class TCN(nn.Module):
             # Adding skip connections from each layer to the output
             # Excluding the last layer, as it would not skip trainable weights
             for index, layer in enumerate( self.network ):
-                x, skip_out = layer(x)
+                x, skip_out = layer(x, embeddings )
                 if self.downsample_skip_connection[ index ] is not None:
                     skip_out = self.downsample_skip_connection[ index ]( skip_out )
                 if index < len( self.network ) - 1:
@@ -384,7 +519,8 @@ class TCN(nn.Module):
             x = self.activation_out( x )
         else:
             for layer in self.network:
-                x, _ = layer(x)
+                #print( 'TCN, embeddings:', embeddings.shape )
+                x, _ = layer( x, embeddings )
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x
