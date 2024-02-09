@@ -153,6 +153,7 @@ class TemporalBlock(nn.Module):
             activation,
             kerner_initializer,
             embedding_shapes,
+            embedding_mode,
             use_gate,
             ):
         super(TemporalBlock, self).__init__()
@@ -160,6 +161,7 @@ class TemporalBlock(nn.Module):
         self.activation_name = activation
         self.kernel_initializer = kerner_initializer
         self.embedding_shapes = embedding_shapes
+        self.embedding_mode = embedding_mode
         self.use_gate = use_gate
 
         if self.use_gate:
@@ -189,7 +191,8 @@ class TemporalBlock(nn.Module):
             if self.use_gate:
                 self.norm1 = nn.BatchNorm1d(2 * n_outputs)
             else:
-                self.norm2 = nn.BatchNorm1d(n_outputs)
+                self.norm1 = nn.BatchNorm1d(n_outputs)
+            self.norm2 = nn.BatchNorm1d(n_outputs)
         elif use_norm == 'layer_norm':
             if self.use_gate:
                 self.norm1 = nn.LayerNorm(2 * n_outputs)
@@ -215,22 +218,21 @@ class TemporalBlock(nn.Module):
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
 
         if self.embedding_shapes is not None:
-            self.embedding_modules = nn.ModuleList()
             if self.use_gate:
                 embedding_layer_n_outputs = 2 * n_outputs
             else:
                 embedding_layer_n_outputs = n_outputs
-            for shape in self.embedding_shapes:
 
-                embedding_layer = nn.Linear(
-                    shape[0],
-                    embedding_layer_n_outputs,
-                    )
-                embedding_layer = weight_norm( embedding_layer )
-                self.embedding_modules.append( embedding_layer )
-            self.embedding_projection = nn.Linear(
-                len( self.embedding_shapes )*embedding_layer_n_outputs,
-                embedding_layer_n_outputs,
+            self.embedding_projection_1 = nn.Conv1d(
+                in_channels = sum( [ shape[0] for shape in self.embedding_shapes ] ),
+                out_channels = embedding_layer_n_outputs,
+                kernel_size = 1,
+                )
+            
+            self.embedding_projection_2 = nn.Conv1d(
+                in_channels = 2 * embedding_layer_n_outputs,
+                out_channels = embedding_layer_n_outputs,
+                kernel_size = 1,
                 )
             
         self.glu = nn.GLU(dim=1)
@@ -281,22 +283,37 @@ class TemporalBlock(nn.Module):
             embeddings = [ embeddings ]
 
         e = []
-        for embedding, module in zip( embeddings, self.embedding_modules ):
-            #print('shapes:', embedding.shape, module.weight.shape)
-            if embedding.shape[1] != module.weight.shape[1]:
+        for embedding, expected_shape in zip( embeddings, self.embedding_shapes ):
+            if embedding.shape[1] != expected_shape[0]:
                 raise ValueError(
                     f"""
-                    Embedding shape {embedding.shape} does not match
-                    module shape {module.weight.shape}
+                    Embedding shape {embedding.shape} passed to 'forward' does not 
+                    match the expected shape {expected_shape} provided as input argument
+                    'embedding_shapes'.
                     """
                     )
-            e.append( module( embedding ) )
+            if len( embedding.shape ) == 2:
+                # unsqueeze time dimension of e and repeat it to match x
+                e.append( embedding.unsqueeze(2).repeat(1, 1, x.shape[2]) )
+            elif len( embedding.shape ) == 3:
+                # check if time dimension of embedding matches x
+                if embedding.shape[2] != x.shape[2]:
+                    raise ValueError(
+                        f"""
+                        Embedding time dimension {embedding.shape[2]} does not match
+                        input time dimension {x.shape[2]}
+                        """
+                        )
+                e.append( embedding )
         e = torch.cat( e, dim=1 )
-        e = self.embedding_projection( e )
-        # unsqueeze time dimension of e and repeat it to match x
-        e = e.unsqueeze(2).repeat(1, 1, x.shape[2])
+        e = self.embedding_projection_1( e )
         #print('shapes:', e.shape, x.shape)
-        x = x + e
+        if self.embedding_mode == 'concat':
+            x = self.embedding_projection_2(
+                torch.cat( [ x, e ], dim=1 )
+                )
+        elif self.embedding_mode == 'add':
+            x = x + e
 
         return x
     
@@ -343,6 +360,7 @@ class TCN(nn.Module):
             use_skip_connections: bool = False,
             input_shape: str = 'NCL',
             embedding_shapes: Optional[ ArrayLike ] = None,
+            embedding_mode: str = 'add',
             use_gate: bool = False,
             ):
         super(TCN, self).__init__()
@@ -414,6 +432,12 @@ class TCN(nn.Module):
                     f"Argument 'embedding_shapes' must be a list of tuples, "
                     f"but is {type(embedding_shapes)}"
                     )
+            
+        if embedding_mode not in [ 'add', 'concat' ]:
+            raise ValueError(
+                f"Argument 'embedding_mode' must be one of: ['add', 'concat']"
+                )
+        self.embedding_mode = embedding_mode
 
         if use_skip_connections:
             self.downsample_skip_connection = nn.ModuleList()
@@ -452,6 +476,7 @@ class TCN(nn.Module):
                     activation=activation,
                     kerner_initializer=self.kernel_initializer,
                     embedding_shapes=self.embedding_shapes,
+                    embedding_mode=self.embedding_mode,
                     use_gate=self.use_gate,
                     )
                 ]
