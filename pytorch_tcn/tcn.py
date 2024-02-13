@@ -127,6 +127,8 @@ class CausalConv1d(nn.Conv1d):
         return x
     
     def inference(self, x):
+        #print( 'buffer shape:', self.buffer.shape )
+        #print( 'x shape:', x.shape )
         x = torch.cat(
             (self.buffer, x),
             -1,

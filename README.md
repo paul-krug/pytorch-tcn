@@ -16,6 +16,8 @@ pip install pytorch-tcn
 ## How to use the TCN class
 
 ```python
+from pytorch_tcn import TCN
+
 model = TCN(
     num_inputs: int,
     num_channels: ArrayLike,
@@ -30,6 +32,7 @@ model = TCN(
     use_skip_connections: bool = False,
     input_shape: str = 'NCL',
     embedding_shapes: Optional[ ArrayLike ] = None,
+    embedding_mode: str = 'add',
     use_gate: bool = False,
 )
 # Continue to train/use model for your task
