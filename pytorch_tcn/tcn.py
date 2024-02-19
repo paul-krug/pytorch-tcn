@@ -86,6 +86,7 @@ class CausalConv1d(nn.Conv1d):
             groups = 1,
             bias = True,
             buffer = None,
+            lookahead = 0,
             **kwargs,
             ):
         
@@ -102,6 +103,14 @@ class CausalConv1d(nn.Conv1d):
             )
         
         self.pad_len = (kernel_size - 1) * dilation
+        if lookahead > self.pad_len//2:
+            lookahead = self.pad_len//2
+        self.lookahead = lookahead
+
+        self.buffer_len = self.pad_len - self.lookahead
+        #print( 'pad len:', self.pad_len )
+        #print( 'lookahead:', self.lookahead )
+        #print( 'buffer len:', self.buffer_len )
         
         if buffer is None:
             buffer = torch.zeros(
@@ -119,7 +128,7 @@ class CausalConv1d(nn.Conv1d):
 
     def forward(self, x):
         p = nn.ConstantPad1d(
-            (self.pad_len, 0),
+            ( self.buffer_len, self.lookahead ),
             0.0,
             )
         x = p(x)
@@ -127,18 +136,53 @@ class CausalConv1d(nn.Conv1d):
         return x
     
     def inference(self, x):
-        #print( 'buffer shape:', self.buffer.shape )
+        if x.shape[0] != 1:
+            raise ValueError(
+                f"""
+                Streaming inference of CausalConv1D layer only supports
+                a batch size of 1, but batch size is {x.shape[0]}.
+                """
+                )
+        if x.shape[2] < self.lookahead + 1:
+            raise ValueError(
+                f"""
+                Input time dimension {x.shape[2]} is too short for causal
+                inference with lookahead {self.lookahead}. You must pass at
+                least lookhead + 1 time steps ({self.lookahead + 1}).
+                """
+                )
+        #print( 'pad len:', self.pad_len )
         #print( 'x shape:', x.shape )
+        #print( 'buffer shape: ', self.buffer.shape )
         x = torch.cat(
             (self.buffer, x),
             -1,
             )
-        self.buffer = x[:, :, -self.pad_len:]
+        #print( 'x shape after buffer pad: ', x.shape)
+        if self.lookahead > 0:
+            self.buffer = x[:, :, -(self.pad_len+self.lookahead) : -self.lookahead ]
+        else:
+            self.buffer = x[:, :, -self.buffer_len: ]
+        #print( 'buffer shape after update: ', self.buffer.shape)
+
         x = super().forward(x)
+        #print( 'x shape after causal inf: ', x.shape)
+        #if self.lookahead > 0:
+        #    x = x[:, :, :-self.lookahead]
+
+        #print( 'x shape after causal inf chop: ', x.shape)
+
         return x
     
     def reset_buffer(self):
         self.buffer.zero_()
+        if self.buffer.shape[2] != self.pad_len:
+            raise ValueError(
+                f"""
+                Buffer shape {self.buffer.shape} does not match the expected
+                shape (1, {self.in_channels}, {self.pad_len}).
+                """
+                )
         return
 
 
@@ -202,6 +246,7 @@ class TemporalBlock(nn.Module):
             embedding_shapes,
             embedding_mode,
             use_gate,
+            lookahead,
             ):
         super(TemporalBlock, self).__init__()
         self.use_norm = use_norm
@@ -211,6 +256,7 @@ class TemporalBlock(nn.Module):
         self.embedding_mode = embedding_mode
         self.use_gate = use_gate
         self.causal = causal
+        self.lookahead = lookahead
 
         if self.use_gate:
             conv1d_n_outputs = 2 * n_outputs
@@ -224,6 +270,7 @@ class TemporalBlock(nn.Module):
                 kernel_size=kernel_size,
                 stride=stride,
                 dilation=dilation,
+                lookahead=self.lookahead,
                 )
 
             self.conv2 = CausalConv1d(
@@ -232,6 +279,7 @@ class TemporalBlock(nn.Module):
                 kernel_size=kernel_size,
                 stride=stride,
                 dilation=dilation,
+                lookahead=self.lookahead,
                 )
 
         else:
@@ -459,6 +507,7 @@ class TCN(nn.Module):
             embedding_shapes: Optional[ ArrayLike ] = None,
             embedding_mode: str = 'add',
             use_gate: bool = False,
+            lookahead: int = 0,
             ):
         super(TCN, self).__init__()
         if dilations is not None and len(dilations) != len(num_channels):
@@ -505,6 +554,7 @@ class TCN(nn.Module):
         self.embedding_shapes = embedding_shapes
         self.use_gate = use_gate
         self.causal = causal
+        self.lookahead = lookahead
 
         if embedding_shapes is not None:
             if isinstance(embedding_shapes, Iterable):
@@ -576,6 +626,7 @@ class TCN(nn.Module):
                     embedding_shapes=self.embedding_shapes,
                     embedding_mode=self.embedding_mode,
                     use_gate=self.use_gate,
+                    lookahead=self.lookahead,
                     )
                 ]
 
@@ -659,6 +710,8 @@ class TCN(nn.Module):
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
                 x, _ = layer.inference( x, embeddings )
+        if self.lookahead > 0:
+            x = x[ :, :, self.lookahead: ]
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x

@@ -51,6 +51,14 @@ class TestTCN(unittest.TestCase):
         self.time_steps = 196
         
         self.test_args = [
+            dict(
+                kwargs = dict(
+                    kernel_size = [3],
+                    causal = [True, False],
+                    lookahead = [ 1, 4 ],
+                    ),
+                expected_error = None,
+            ),
             # Test different kernel sizes
             dict(
                 kwargs = dict( kernel_size = [3, 5, 7] ),
@@ -81,7 +89,10 @@ class TestTCN(unittest.TestCase):
                 expected_error = None,
             ),
             dict(
-                kwargs = dict( causal = [True, False], ),
+                kwargs = dict(
+                    causal = [True, False],
+                    lookahead = [ 0, 1, 4 ],
+                    ),
                 expected_error = None,
             ),
             dict(
@@ -162,6 +173,9 @@ class TestTCN(unittest.TestCase):
             num_channels = self.num_channels,
             **kwargs,
         )
+        first_layer = next( iter( tcn.children() ) )
+        #print( 'tcn first conv layer buffer shape: ', first_layer[0].conv1.buffer.shape)
+        #stopü
 
         x = torch.randn(
             self.batch_size,
@@ -181,7 +195,7 @@ class TestTCN(unittest.TestCase):
         expected_shape_inference = (
             1,
             self.num_channels[-1],
-            self.time_steps,
+            self.time_steps - tcn.lookahead,
             )
 
         time_dimension = -1
@@ -197,7 +211,7 @@ class TestTCN(unittest.TestCase):
             x_inference = x_inference.permute(0, 2, 1)
             expected_shape_inference = (
                 1,
-                self.time_steps,
+                self.time_steps - tcn.lookahead,
                 self.num_channels[-1],
                 )
 
@@ -209,7 +223,7 @@ class TestTCN(unittest.TestCase):
                 if None in shape:
                     # replace None with self.time_steps
                     shape = list(shape)
-                    shape[ shape.index(None) ] = self.time_steps
+                    shape[ shape.index(None) ] = self.time_steps# - tcn.lookahead
                     shape = tuple(shape)
 
                     #shape_inference = list(shape_inference)
@@ -242,20 +256,35 @@ class TestTCN(unittest.TestCase):
             tcn.eval()
 
             tcn.reset_buffers()
+            #print( 'tcn first conv layer buffer shape, CAUSAL Inf 1: ', first_layer[0].conv1.buffer.shape)
             with torch.no_grad():
                 #y_forward = tcn(x_inference, embeddings = embeddings)
+                #print( 'x_inference shape: ', x_inference.shape)
+                #print( 'expected_shape_inference: ', expected_shape_inference)
                 y_inference = tcn.inference(
                     x_inference,
                     embeddings = embeddings_inference,
                     )
+                #print( 'y_inference shape: ', y_inference.shape)
+                #stop
+                
             self.assertEqual( y_inference.shape, expected_shape_inference )
 
             # piecewise inference:
             tcn.reset_buffers()
+            #print( 'tcn first conv layer buffer shape, CAUSAL Inf 2: ', first_layer[0].conv1.buffer.shape)
             y_inference_frames = []
-            for i in range(0, self.time_steps):
+            #index:index+hop_length
+            block_size = 1 + tcn.lookahead
+            for i in range( 0, self.time_steps-tcn.lookahead ):
                 # pick frame from time dimension
-                frame = x_inference.select(time_dimension, i).unsqueeze(time_dimension)
+                frame = x_inference.narrow(
+                    dim = time_dimension,
+                    start = i,
+                    length = block_size,
+                    )
+                #print( 'frame shape: ', frame.shape)
+                #stop
 
                 if embeddings_inference is None:
                     embeddings_frame = None
@@ -266,12 +295,17 @@ class TestTCN(unittest.TestCase):
                             embeddings_frame.append( emb )
                         elif len(emb.shape) == 3:
                             embeddings_frame.append(
-                                emb.select(time_dimension, i).unsqueeze(time_dimension)
+                                emb.narrow(
+                                    dim = time_dimension,
+                                    start = i,
+                                    length = block_size,
+                                    )
                                 )
                         else:
                             raise ValueError('Invalid shape for embeddings')
 
                 with torch.no_grad():
+                    #print( 'frame shape: ', frame.shape)
                     y_inference_frames.append(
                         tcn.inference(
                             frame,
@@ -280,6 +314,7 @@ class TestTCN(unittest.TestCase):
                     )
             y_inference_frames = torch.cat( y_inference_frames, dim = time_dimension )
             self.assertEqual( y_inference_frames.shape, expected_shape_inference )
+            #stop
 
             ## piecewise inference without buffer
             #tcn.reset_buffers()
