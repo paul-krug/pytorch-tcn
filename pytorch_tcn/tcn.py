@@ -323,7 +323,8 @@ class TemporalBlock(nn.Module):
             embeddings,
             ):
         out = self.conv1(x)
-        out = self.apply_norm( self.norm1, out )
+        if hasattr(self, "norm1"):
+            out = self.apply_norm( self.norm1, out )
 
         if embeddings is not None:
             out = self.apply_embeddings( out, embeddings )
