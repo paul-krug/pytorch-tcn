@@ -323,7 +323,8 @@ class TemporalBlock(nn.Module):
             embeddings,
             ):
         out = self.conv1(x)
-        out = self.apply_norm( self.norm1, out )
+        if hasattr(self, "norm1"):
+            out = self.apply_norm( self.norm1, out )
 
         if embeddings is not None:
             out = self.apply_embeddings( out, embeddings )
@@ -335,7 +336,8 @@ class TemporalBlock(nn.Module):
         out = self.dropout1(out)
 
         out = self.conv2(out)
-        out = self.apply_norm( self.norm2, out )
+        if hasattr(self, "norm2"):
+            out = self.apply_norm( sel    f.norm2, out )
         out = self.activation2(out)
         out = self.dropout2(out)
 
