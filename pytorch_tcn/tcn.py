@@ -337,7 +337,7 @@ class TemporalBlock(nn.Module):
 
         out = self.conv2(out)
         if hasattr(self, "norm2"):
-            out = self.apply_norm( sel    f.norm2, out )
+            out = self.apply_norm( self.norm2, out )
         out = self.activation2(out)
         out = self.dropout2(out)
 
