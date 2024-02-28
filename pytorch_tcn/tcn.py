@@ -508,6 +508,7 @@ class TCN(nn.Module):
             embedding_mode: str = 'add',
             use_gate: bool = False,
             lookahead: int = 0,
+            output_projection: Optional[ int ] = None,
             ):
         super(TCN, self).__init__()
         if dilations is not None and len(dilations) != len(num_channels):
@@ -555,6 +556,7 @@ class TCN(nn.Module):
         self.use_gate = use_gate
         self.causal = causal
         self.lookahead = lookahead
+        self.output_projection = output_projection
 
         if embedding_shapes is not None:
             if isinstance(embedding_shapes, Iterable):
@@ -632,6 +634,15 @@ class TCN(nn.Module):
 
         self.network = nn.ModuleList(layers)
 
+        if self.output_projection is not None:
+            self.projection = nn.Conv1d(
+                in_channels=num_channels[-1],
+                out_channels=self.output_projection,
+                kernel_size=1,
+                )
+        else:
+            self.projection = None
+
         if self.causal:
             self.reset_buffers()
         return
@@ -673,6 +684,8 @@ class TCN(nn.Module):
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
                 x, _ = layer( x, embeddings )
+        if self.projection is not None:
+            x = self.projection( x )
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x
@@ -710,6 +723,8 @@ class TCN(nn.Module):
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
                 x, _ = layer.inference( x, embeddings )
+        if self.projection is not None:
+            x = self.projection( x )
         if self.lookahead > 0:
             x = x[ :, :, self.lookahead: ]
         if self.input_shape == 'NLC':
