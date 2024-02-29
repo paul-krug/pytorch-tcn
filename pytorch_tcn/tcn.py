@@ -31,7 +31,39 @@ kernel_init_fn = dict(
     uniform=nn.init.uniform_,
 )
 
+def _check_activation_arg(
+        activation,
+        arg_name,
+        ):
+    if activation not in activation_fn.keys():
+        raise ValueError(
+            f"""
+            If argument '{arg_name}' is a string, it must be one of:
+            {activation_fn.keys()}. However, you may also pass any
+            torch.nn.Module object as the 'activation' argument.
+            """
+            )
+    elif not isinstance( activation, nn.Module ):
+        raise ValueError(
+            f"""
+            The argument '{arg_name}' must either be a valid string or
+            a torch.nn.Module object, but type {type(activation)} was passed.
+            """
+            )
+    return
 
+def _check_generic_input_arg(
+        arg,
+        arg_name,
+        allowed_values,
+        ):
+    if arg not in allowed_values:
+        raise ValueError(
+            f"""
+            Argument '{arg_name}' must be one of: {allowed_values}
+            """
+            )
+    return
 
 def get_kernel_init_fn(
         name: str,
@@ -125,14 +157,25 @@ class CausalConv1d(nn.Conv1d):
             )
         
         return
-
-    def forward(self, x):
+    
+    def _forward(self, x):
         p = nn.ConstantPad1d(
             ( self.buffer_len, self.lookahead ),
             0.0,
             )
         x = p(x)
         x = super().forward(x)
+        return x
+
+    def forward(
+            self,
+            x,
+            inference=False,
+            ):
+        if inference:
+            x = self._inference(x)
+        else:
+            x = self._forward(x)
         return x
     
     def inference(self, x):
@@ -151,27 +194,15 @@ class CausalConv1d(nn.Conv1d):
                 least lookhead + 1 time steps ({self.lookahead + 1}).
                 """
                 )
-        #print( 'pad len:', self.pad_len )
-        #print( 'x shape:', x.shape )
-        #print( 'buffer shape: ', self.buffer.shape )
         x = torch.cat(
             (self.buffer, x),
             -1,
             )
-        #print( 'x shape after buffer pad: ', x.shape)
         if self.lookahead > 0:
             self.buffer = x[:, :, -(self.pad_len+self.lookahead) : -self.lookahead ]
         else:
             self.buffer = x[:, :, -self.buffer_len: ]
-        #print( 'buffer shape after update: ', self.buffer.shape)
-
         x = super().forward(x)
-        #print( 'x shape after causal inf: ', x.shape)
-        #if self.lookahead > 0:
-        #    x = x[:, :, :-self.lookahead]
-
-        #print( 'x shape after causal inf chop: ', x.shape)
-
         return x
     
     def reset_buffer(self):
@@ -250,7 +281,7 @@ class TemporalBlock(nn.Module):
             ):
         super(TemporalBlock, self).__init__()
         self.use_norm = use_norm
-        self.activation_name = activation
+        self.activation = activation
         self.kernel_initializer = kerner_initializer
         self.embedding_shapes = embedding_shapes
         self.embedding_mode = embedding_mode
@@ -320,9 +351,17 @@ class TemporalBlock(nn.Module):
             self.norm1 = None
             self.norm2 = None
 
-        self.activation1 = activation_fn[ self.activation_name ]()
-        self.activation2 = activation_fn[ self.activation_name ]()
-        self.activation_final = activation_fn[ self.activation_name ]()
+        if isinstance( self.activation, str ):
+            self.activation1 = activation_fn[ self.activation ]()
+            self.activation2 = activation_fn[ self.activation ]()
+            self.activation_final = activation_fn[ self.activation ]()
+        else:
+            self.activation1 = self.activation()
+            self.activation2 = self.activation()
+            self.activation_final = self.activation()
+
+        if self.use_gate:
+            self.activation1 = nn.GLU(dim=1)
 
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
@@ -346,8 +385,6 @@ class TemporalBlock(nn.Module):
                 out_channels = embedding_layer_n_outputs,
                 kernel_size = 1,
                 )
-            
-        self.glu = nn.GLU(dim=1)
         
         self.init_weights()
         return
@@ -400,8 +437,8 @@ class TemporalBlock(nn.Module):
                 raise ValueError(
                     f"""
                     Embedding shape {embedding.shape} passed to 'forward' does not 
-                    match the expected shape {expected_shape} provided as input argument
-                    'embedding_shapes'.
+                    match the expected shape {expected_shape} provided as input to
+                    argument 'embedding_shapes'.
                     """
                     )
             if len( embedding.shape ) == 2:
@@ -412,8 +449,8 @@ class TemporalBlock(nn.Module):
                 if embedding.shape[2] != x.shape[2]:
                     raise ValueError(
                         f"""
-                        Embedding time dimension {embedding.shape[2]} does not match
-                        input time dimension {x.shape[2]}
+                        Embedding time dimension {embedding.shape[2]} does not
+                        match the input time dimension {x.shape[2]}
                         """
                         )
                 e.append( embedding )
@@ -433,20 +470,18 @@ class TemporalBlock(nn.Module):
             self,
             x,
             embeddings,
+            inference,
             ):
-        out = self.conv1(x)
+        out = self.conv1(x, inference=inference)
         out = self.apply_norm( self.norm1, out )
 
         if embeddings is not None:
             out = self.apply_embeddings( out, embeddings )
 
-        if self.use_gate:
-            out = self.glu(out)
-        else:
-            out = self.activation1(out)
+        out = self.activation1(out)
         out = self.dropout1(out)
 
-        out = self.conv2(out)
+        out = self.conv2(out, inference=inference)
         out = self.apply_norm( self.norm2, out )
         out = self.activation2(out)
         out = self.dropout2(out)
@@ -467,25 +502,8 @@ class TemporalBlock(nn.Module):
                 However, you selected a non-causal network.
                 """
                 )
-        out = self.conv1.inference(x)
-        out = self.apply_norm( self.norm1, out )
-
-        if embeddings is not None:
-            out = self.apply_embeddings( out, embeddings )
-
-        if self.use_gate:
-            out = self.glu(out)
-        else:
-            out = self.activation1(out)
-        out = self.dropout1(out)
-
-        out = self.conv2.inference(out)
-        out = self.apply_norm( self.norm2, out )
-        out = self.activation2(out)
-        out = self.dropout2(out)
-
-        res = x if self.downsample is None else self.downsample(x)
-        return self.activation_final(out + res), out
+        x, out = self.forward(x, embeddings, inference=True)
+        return x, out
 
 
 
@@ -509,32 +527,25 @@ class TCN(nn.Module):
             use_gate: bool = False,
             lookahead: int = 0,
             output_projection: Optional[ int ] = None,
+            output_activation: Optional[ str ] = None,
             ):
         super(TCN, self).__init__()
+
         if dilations is not None and len(dilations) != len(num_channels):
             raise ValueError("Length of dilations must match length of num_channels")
         
         self.allowed_norm_values = ['batch_norm', 'layer_norm', 'weight_norm', None]
-        if use_norm not in self.allowed_norm_values:
-            raise ValueError(
-                f"Argument 'use_norm' must be one of: {self.allowed_norm_values}"
-                )
-        
-        if activation not in activation_fn.keys():
-            raise ValueError(
-                f"Argument 'activation' must be one of: {activation_fn.keys()}"
-                )
-        
-        if kernel_initializer not in kernel_init_fn.keys():
-            raise ValueError(
-                f"Argument 'kernel_initializer' must be one of: {kernel_init_fn.keys()}"
-                )
-        
         self.allowed_input_shapes = ['NCL', 'NLC']
-        if input_shape not in self.allowed_input_shapes:
-            raise ValueError(
-                f"Argument 'input_shape' must be one of: {self.allowed_input_shapes}"
-                )
+
+        _check_generic_input_arg( causal, 'causal', [True, False] )
+        _check_generic_input_arg( use_norm, 'use_norm', self.allowed_norm_values )
+        _check_activation_arg(activation, 'activation')
+        _check_generic_input_arg( kernel_init_fn, 'kernel_initializer', kernel_init_fn.keys() )
+        _check_generic_input_arg( use_skip_connections, 'use_skip_connections', [True, False] )
+        _check_generic_input_arg( input_shape, 'input_shape', self.allowed_input_shapes )
+        _check_generic_input_arg( embedding_mode, 'embedding_mode', ['add', 'concat'] )
+        _check_generic_input_arg( use_gate, 'use_gate', [True, False] )
+        _check_activation_arg(output_activation, 'output_activation')
 
         if dilations is None:
             if dilation_reset is None:
@@ -553,10 +564,12 @@ class TCN(nn.Module):
         self.use_skip_connections = use_skip_connections
         self.input_shape = input_shape
         self.embedding_shapes = embedding_shapes
+        self.embedding_mode = embedding_mode
         self.use_gate = use_gate
         self.causal = causal
         self.lookahead = lookahead
         self.output_projection = output_projection
+        self.output_activation = output_activation
 
         if embedding_shapes is not None:
             if isinstance(embedding_shapes, Iterable):
@@ -566,8 +579,10 @@ class TCN(nn.Module):
                             shape = tuple( shape )
                         except Exception as e:
                             raise ValueError(
-                                f"Each shape in argument 'embedding_shapes' must be an Iterable of tuples. "
-                                f"Tried to convert {shape} to tuple, but failed with error: {e}"
+                                f"""
+                                Each shape in argument 'embedding_shapes' must be an Iterable of tuples.
+                                Tried to convert {shape} to tuple, but failed with error: {e}
+                                """
                                 )
                     if len( shape ) not in [ 1, 2 ]:
                         raise ValueError(
@@ -579,15 +594,12 @@ class TCN(nn.Module):
                             )
             else:
                 raise ValueError(
-                    f"Argument 'embedding_shapes' must be a list of tuples, "
-                    f"but is {type(embedding_shapes)}"
+                    f"""
+                    Argument 'embedding_shapes' must be an Iterable of tuples,
+                    but is {type(embedding_shapes)}.
+                    """
                     )
             
-        if embedding_mode not in [ 'add', 'concat' ]:
-            raise ValueError(
-                f"Argument 'embedding_mode' must be one of: ['add', 'concat']"
-                )
-        self.embedding_mode = embedding_mode
 
         if use_skip_connections:
             self.downsample_skip_connection = nn.ModuleList()
@@ -635,13 +647,21 @@ class TCN(nn.Module):
         self.network = nn.ModuleList(layers)
 
         if self.output_projection is not None:
-            self.projection = nn.Conv1d(
+            self.projection_out = nn.Conv1d(
                 in_channels=num_channels[-1],
                 out_channels=self.output_projection,
                 kernel_size=1,
                 )
         else:
-            self.projection = None
+            self.projection_out = None
+
+        if self.output_activation is not None:
+            if isinstance( self.output_activation, str ):
+                self.activation_out = activation_fn[ self.output_activation ]()
+            else:
+                self.activation_out = self.output_activation()
+        else:
+            self.activation_out = None #nn.Identity()
 
         if self.causal:
             self.reset_buffers()
@@ -684,8 +704,10 @@ class TCN(nn.Module):
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
                 x, _ = layer( x, embeddings )
-        if self.projection is not None:
-            x = self.projection( x )
+        if self.projection_out is not None:
+            x = self.projection_out( x )
+        if self.activation_out is not None:
+            x = self.activation_out( x )
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x
@@ -723,8 +745,8 @@ class TCN(nn.Module):
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
                 x, _ = layer.inference( x, embeddings )
-        if self.projection is not None:
-            x = self.projection( x )
+        if self.projection_out is not None:
+            x = self.projection_out( x )
         if self.lookahead > 0:
             x = x[ :, :, self.lookahead: ]
         if self.input_shape == 'NLC':
