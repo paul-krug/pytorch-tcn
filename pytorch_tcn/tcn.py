@@ -684,7 +684,16 @@ class TCN(nn.Module):
             self,
             x,
             embeddings=None,
+            inference=False,
             ):
+        if inference and not self.causal:
+            raise ValueError(
+                """
+                This streaming inference mode is made for blockwise causal
+                processing and thus, is only supported for causal networks.
+                However, you selected a non-causal network.
+                """
+                )
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         if self.use_skip_connections:
@@ -692,7 +701,11 @@ class TCN(nn.Module):
             # Adding skip connections from each layer to the output
             # Excluding the last layer, as it would not skip trainable weights
             for index, layer in enumerate( self.network ):
-                x, skip_out = layer(x, embeddings )
+                x, skip_out = layer(
+                    x,
+                    embeddings=embeddings,
+                    inference=inference,
+                    )
                 if self.downsample_skip_connection[ index ] is not None:
                     skip_out = self.downsample_skip_connection[ index ]( skip_out )
                 if index < len( self.network ) - 1:
@@ -703,7 +716,11 @@ class TCN(nn.Module):
         else:
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
-                x, _ = layer( x, embeddings )
+                x, _ = layer(
+                    x,
+                    embeddings=embeddings,
+                    inference=inference,
+                    )
         if self.projection_out is not None:
             x = self.projection_out( x )
         if self.activation_out is not None:
@@ -717,40 +734,11 @@ class TCN(nn.Module):
             x,
             embeddings=None,
             ):
-        if not self.causal:
-            raise ValueError(
-                """
-                This streaming inference mode is made for blockwise causal
-                processing and thus, is only supported for causal networks.
-                However, you selected a non-causal network.
-                """
-                )
-        
-        if self.input_shape == 'NLC':
-            x = x.transpose(1, 2)
-        if self.use_skip_connections:
-            skip_connections = []
-            # Adding skip connections from each layer to the output
-            # Excluding the last layer, as it would not skip trainable weights
-            for index, layer in enumerate( self.network ):
-                x, skip_out = layer.inference(x, embeddings)
-                if self.downsample_skip_connection[ index ] is not None:
-                    skip_out = self.downsample_skip_connection[ index ]( skip_out )
-                if index < len( self.network ) - 1:
-                    skip_connections.append( skip_out )
-            skip_connections.append( x )
-            x = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
-            x = self.activation_out( x )
-        else:
-            for layer in self.network:
-                #print( 'TCN, embeddings:', embeddings.shape )
-                x, _ = layer.inference( x, embeddings )
-        if self.projection_out is not None:
-            x = self.projection_out( x )
-        if self.lookahead > 0:
-            x = x[ :, :, self.lookahead: ]
-        if self.input_shape == 'NLC':
-            x = x.transpose(1, 2)
+        x = self.forward(
+            x,
+            embeddings=embeddings,
+            inference=True,
+            )
         return x
     
     def reset_buffers(self):
