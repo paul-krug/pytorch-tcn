@@ -20,6 +20,8 @@ activation_fn = dict(
     elu=nn.ELU,
     gelu=nn.GELU,
     selu=nn.SELU,
+    softmax=nn.Softmax,
+    log_softmax=nn.LogSoftmax,
 )
 
 kernel_init_fn = dict(
