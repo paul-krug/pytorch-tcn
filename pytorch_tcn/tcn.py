@@ -69,6 +69,10 @@ def get_kernel_init_fn(
         name: str,
         activation: str,
         ) -> Tuple[ nn.Module, dict ]:
+    if isinstance( activation, nn.Module ):
+        return kernel_init_fn[ name ], dict()
+    # TODO: this means no gain is used for custom activation functions
+        
     if name not in kernel_init_fn.keys():
         raise ValueError(
             f"Argument 'kernel_initializer' must be one of: {kernel_init_fn.keys()}"
@@ -392,7 +396,7 @@ class TemporalBlock(nn.Module):
     def init_weights(self):
         initialize, kwargs = get_kernel_init_fn(
             name=self.kernel_initializer,
-            activation=self.activation_name,
+            activation=self.activation,
             )
         initialize(
             self.conv1.weight,
@@ -559,7 +563,7 @@ class TCN(nn.Module):
                     ]
             
         self.dilations = dilations
-        self.activation_name = activation
+        self.activation = activation
         self.kernel_initializer = kernel_initializer
         self.use_skip_connections = use_skip_connections
         self.input_shape = input_shape
@@ -612,7 +616,10 @@ class TCN(nn.Module):
                 else:
                     self.downsample_skip_connection.append( None )
             self.init_skip_connection_weights()
-            self.activation_out = activation_fn[ self.activation_name ]()
+            if isinstance( self.activation, str ):
+                self.activation_skip_out = activation_fn[ self.activation ]()
+            else:
+                self.activation_skip_out = self.activation()
         else:
             self.downsample_skip_connection = None
         
@@ -670,7 +677,7 @@ class TCN(nn.Module):
     def init_skip_connection_weights(self):
         initialize, kwargs = get_kernel_init_fn(
             name=self.kernel_initializer,
-            activation=self.activation_name,
+            activation=self.activation,
             )
         for layer in self.downsample_skip_connection:
             if layer is not None:
@@ -712,7 +719,7 @@ class TCN(nn.Module):
                     skip_connections.append( skip_out )
             skip_connections.append( x )
             x = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
-            x = self.activation_out( x )
+            x = self.activation_skip_out( x )
         else:
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
