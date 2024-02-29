@@ -214,12 +214,6 @@ class CausalConv1d(nn.Conv1d):
         else:
             self.buffer = x[:, :, -self.buffer_len: ]
         x = super().forward(x)
-        #print( 'x shape after causal inf: ', x.shape)
-        #if self.lookahead > 0:
-        #    x = x[:, :, :-self.lookahead]
-
-        #print( 'x shape after causal inf chop: ', x.shape)
-
         return x
     
     def reset_buffer(self):
