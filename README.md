@@ -89,6 +89,9 @@ tcn = TCN(
     causal=True,
 )
 
+# Important: reset the buffer before processing a new sequence
+tcn.reset_buffers()
+
 # blockwise processing
 # block should be of shape:
 # (1, block_size, num_inputs)
@@ -115,6 +118,8 @@ tcn = TCN(
     causal=True,
     lookahead=1,
 )
+
+tcn.reset_buffers()
 
 block # shape: (1, block_size + lookahead, num_inputs)
 output = tcn.inference(block)
