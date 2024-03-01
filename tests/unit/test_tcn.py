@@ -1,4 +1,5 @@
 import unittest
+import numpy as np
 import torch
 import pytorch_tcn
 from pytorch_tcn import TCN
@@ -50,6 +51,16 @@ class TestTCN(unittest.TestCase):
         self.time_steps = 196
         
         self.test_args = [
+            dict(
+                kwargs = dict(
+                    kernel_size = [3],
+                    causal = [True, False],
+                    lookahead = [ 1, 4 ],
+                    output_projection = [None, 128],
+                    output_activation = [None, 'relu'],
+                    ),
+                expected_error = None,
+            ),
             # Test different kernel sizes
             dict(
                 kwargs = dict( kernel_size = [3, 5, 7] ),
@@ -80,7 +91,10 @@ class TestTCN(unittest.TestCase):
                 expected_error = None,
             ),
             dict(
-                kwargs = dict( causal = [True, False], ),
+                kwargs = dict(
+                    causal = [True, False],
+                    lookahead = [ 0, 1, 4 ],
+                    ),
                 expected_error = None,
             ),
             dict(
@@ -161,6 +175,9 @@ class TestTCN(unittest.TestCase):
             num_channels = self.num_channels,
             **kwargs,
         )
+        first_layer = next( iter( tcn.children() ) )
+        #print( 'tcn first conv layer buffer shape: ', first_layer[0].conv1.buffer.shape)
+        #stopü
 
         x = torch.randn(
             self.batch_size,
@@ -172,24 +189,49 @@ class TestTCN(unittest.TestCase):
             self.num_channels[-1],
             self.time_steps,
             )
+        x_inference = torch.randn(
+            1,
+            self.num_inputs,
+            self.time_steps,
+            )
+        expected_shape_inference = (
+            1,
+            self.num_channels[-1],
+            self.time_steps - tcn.lookahead,
+            )
 
+        time_dimension = -1
         # check if 'input_shape' is 'NCL'
         if 'input_shape' in kwargs and kwargs['input_shape'] == 'NLC':
+            time_dimension = 1
             x = x.permute(0, 2, 1)
             expected_shape = (
                 self.batch_size,
                 self.time_steps,
                 self.num_channels[-1],
                 )
+            x_inference = x_inference.permute(0, 2, 1)
+            expected_shape_inference = (
+                1,
+                self.time_steps - tcn.lookahead,
+                self.num_channels[-1],
+                )
 
         if 'embedding_shapes' in kwargs and kwargs['embedding_shapes'] is not None:
             embeddings = []
+            embeddings_inference = []
             for shape in kwargs[ 'embedding_shapes' ]:
+                #shape_inference = shape
                 if None in shape:
                     # replace None with self.time_steps
                     shape = list(shape)
-                    shape[ shape.index(None) ] = self.time_steps
+                    shape[ shape.index(None) ] = self.time_steps# - tcn.lookahead
                     shape = tuple(shape)
+
+                    #shape_inference = list(shape_inference)
+                    #shape_inference[ shape_inference.index(None) ] = 1
+                    #shape_inference = tuple(shape_inference)
+
 
                 embeddings.append(
                     torch.randn(
@@ -197,12 +239,111 @@ class TestTCN(unittest.TestCase):
                         *shape,
                         )
                     )
+                embeddings_inference.append(
+                    torch.randn(
+                        1,
+                        *shape,
+                        )
+                    )
         else:
             embeddings = None
+            embeddings_inference = None
 
         y = tcn(x, embeddings = embeddings)
         
         self.assertEqual( y.shape, expected_shape )
+
+        # Testing the streaming inference mode for causal models
+        if tcn.causal:
+            tcn.eval()
+
+            tcn.reset_buffers()
+            #print( 'tcn first conv layer buffer shape, CAUSAL Inf 1: ', first_layer[0].conv1.buffer.shape)
+            with torch.no_grad():
+                #y_forward = tcn(x_inference, embeddings = embeddings)
+                #print( 'x_inference shape: ', x_inference.shape)
+                #print( 'expected_shape_inference: ', expected_shape_inference)
+                y_inference = tcn.inference(
+                    x_inference,
+                    embeddings = embeddings_inference,
+                    )
+                #print( 'y_inference shape: ', y_inference.shape)
+                #stop
+                
+            self.assertEqual( y_inference.shape, expected_shape_inference )
+
+            # piecewise inference:
+            tcn.reset_buffers()
+            #print( 'tcn first conv layer buffer shape, CAUSAL Inf 2: ', first_layer[0].conv1.buffer.shape)
+            y_inference_frames = []
+            #index:index+hop_length
+            block_size = 1 + tcn.lookahead
+            for i in range( 0, self.time_steps-tcn.lookahead ):
+                # pick frame from time dimension
+                frame = x_inference.narrow(
+                    dim = time_dimension,
+                    start = i,
+                    length = block_size,
+                    )
+                #print( 'frame shape: ', frame.shape)
+                #stop
+
+                if embeddings_inference is None:
+                    embeddings_frame = None
+                else:
+                    embeddings_frame = []
+                    for emb in embeddings_inference:
+                        if len(emb.shape) == 2:
+                            embeddings_frame.append( emb )
+                        elif len(emb.shape) == 3:
+                            embeddings_frame.append(
+                                emb.narrow(
+                                    dim = time_dimension,
+                                    start = i,
+                                    length = block_size,
+                                    )
+                                )
+                        else:
+                            raise ValueError('Invalid shape for embeddings')
+
+                with torch.no_grad():
+                    #print( 'frame shape: ', frame.shape)
+                    y_inference_frames.append(
+                        tcn.inference(
+                            frame,
+                            embeddings = embeddings_frame,
+                            )
+                    )
+            y_inference_frames = torch.cat( y_inference_frames, dim = time_dimension )
+            self.assertEqual( y_inference_frames.shape, expected_shape_inference )
+            #stop
+
+            ## piecewise inference without buffer
+            #tcn.reset_buffers()
+            #y_forward_frames = []
+            #for i in range(0, self.time_steps):
+            #    # pick frame from time dimension
+            #    frame = x_inference.select(time_dimension, i).unsqueeze(time_dimension)
+            #    y_forward_frames.append(
+            #        tcn( frame, embeddings = embeddings )
+            #    )
+            #y_forward_frames = torch.cat( y_forward_frames, dim = -1 )
+            #self.assertEqual( y_forward_frames.shape, expected_shape_inference )
+
+            # Verify Output
+            #y_forward_frames = y_forward_frames.detach().cpu().numpy().squeeze()[0]
+            #y_inference_frames = y_inference_frames.detach().cpu().numpy().squeeze()[0]
+            #y_inference = y_inference.detach().cpu().numpy().squeeze()[0]
+            #y_forward = y_forward.detach().cpu().numpy().squeeze()[0]
+            #print( 'y shape: ', y_forward.shape )
+            #print( 'y_inference shape: ', y_inference.shape )
+            #print( 'np med1: ', np.median( abs(y_inference_frames - y_forward) ) )
+            #print( 'np med2: ', np.median( abs(y_forward_frames - y_forward) ) )
+            #import matplotlib.pyplot as plt
+            #plt.plot(y_inference_frames)
+            #plt.plot(y_forward)
+            #plt.show()
+
         return
     
     def test_tcn_grid_search(self):
