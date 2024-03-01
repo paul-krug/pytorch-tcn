@@ -37,19 +37,23 @@ def _check_activation_arg(
         activation,
         arg_name,
         ):
-    if activation not in activation_fn.keys():
-        raise ValueError(
-            f"""
-            If argument '{arg_name}' is a string, it must be one of:
-            {activation_fn.keys()}. However, you may also pass any
-            torch.nn.Module object as the 'activation' argument.
-            """
-            )
+    if activation is None and arg_name == 'output_activation':
+        return
+    if isinstance( activation, str ):
+        if activation not in activation_fn.keys():
+            raise ValueError(
+                f"""
+                If argument '{arg_name}' is a string, it must be one of:
+                {activation_fn.keys()}. However, you may also pass any
+                torch.nn.Module object as the 'activation' argument.
+                """
+                )
     elif not isinstance( activation, nn.Module ):
         raise ValueError(
             f"""
             The argument '{arg_name}' must either be a valid string or
-            a torch.nn.Module object, but type {type(activation)} was passed.
+            a torch.nn.Module object, but {activation} was passed,
+            which is of type {type(activation)}.
             """
             )
     return
@@ -62,7 +66,8 @@ def _check_generic_input_arg(
     if arg not in allowed_values:
         raise ValueError(
             f"""
-            Argument '{arg_name}' must be one of: {allowed_values}
+            Argument '{arg_name}' must be one of: {allowed_values},
+            but {arg} was passed.
             """
             )
     return
@@ -80,7 +85,7 @@ def get_kernel_init_fn(
             f"Argument 'kernel_initializer' must be one of: {kernel_init_fn.keys()}"
             )
     if name in [ 'xavier_uniform', 'xavier_normal' ]:
-        if activation in [ 'gelu', 'elu' ]:
+        if activation in [ 'gelu', 'elu', 'softmax', 'log_softmax' ]:
             warnings.warn(
                 f"""
                 Argument 'kernel_initializer' {name}
@@ -95,7 +100,7 @@ def get_kernel_init_fn(
             gain = nn.init.calculate_gain( activation )
         kernel_init_kw = dict( gain=gain )
     elif name in [ 'kaiming_uniform', 'kaiming_normal' ]:
-        if activation in [ 'gelu', 'elu' ]:
+        if activation in [ 'gelu', 'elu', 'softmax', 'log_softmax' ]:
             raise ValueError(
                 f"""
                 Argument 'kernel_initializer' {name}
@@ -179,7 +184,7 @@ class CausalConv1d(nn.Conv1d):
             inference=False,
             ):
         if inference:
-            x = self._inference(x)
+            x = self.inference(x)
         else:
             x = self._forward(x)
         return x
@@ -253,7 +258,7 @@ class TemporalConv1d(nn.Conv1d):
         
         return
     
-    def forward(self, x):
+    def forward(self, x, inference=None):
         # Implementation of 'same'-type padding (non-causal padding)
     
         # Check if pad_len is an odd value
@@ -546,7 +551,7 @@ class TCN(nn.Module):
         _check_generic_input_arg( causal, 'causal', [True, False] )
         _check_generic_input_arg( use_norm, 'use_norm', self.allowed_norm_values )
         _check_activation_arg(activation, 'activation')
-        _check_generic_input_arg( kernel_init_fn, 'kernel_initializer', kernel_init_fn.keys() )
+        _check_generic_input_arg( kernel_initializer, 'kernel_initializer', kernel_init_fn.keys() )
         _check_generic_input_arg( use_skip_connections, 'use_skip_connections', [True, False] )
         _check_generic_input_arg( input_shape, 'input_shape', self.allowed_input_shapes )
         _check_generic_input_arg( embedding_mode, 'embedding_mode', ['add', 'concat'] )
@@ -734,6 +739,8 @@ class TCN(nn.Module):
             x = self.projection_out( x )
         if self.activation_out is not None:
             x = self.activation_out( x )
+        if inference and self.lookahead > 0:
+            x = x[ :, :, self.lookahead: ]
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x

@@ -56,6 +56,8 @@ class TestTCN(unittest.TestCase):
                     kernel_size = [3],
                     causal = [True, False],
                     lookahead = [ 1, 4 ],
+                    output_projection = [None, 128],
+                    output_activation = [None, 'relu'],
                     ),
                 expected_error = None,
             ),
