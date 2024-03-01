@@ -20,6 +20,8 @@ activation_fn = dict(
     elu=nn.ELU,
     gelu=nn.GELU,
     selu=nn.SELU,
+    softmax=nn.Softmax,
+    log_softmax=nn.LogSoftmax,
 )
 
 kernel_init_fn = dict(
@@ -31,18 +33,59 @@ kernel_init_fn = dict(
     uniform=nn.init.uniform_,
 )
 
+def _check_activation_arg(
+        activation,
+        arg_name,
+        ):
+    if activation is None and arg_name == 'output_activation':
+        return
+    if isinstance( activation, str ):
+        if activation not in activation_fn.keys():
+            raise ValueError(
+                f"""
+                If argument '{arg_name}' is a string, it must be one of:
+                {activation_fn.keys()}. However, you may also pass any
+                torch.nn.Module object as the 'activation' argument.
+                """
+                )
+    elif not isinstance( activation, nn.Module ):
+        raise ValueError(
+            f"""
+            The argument '{arg_name}' must either be a valid string or
+            a torch.nn.Module object, but {activation} was passed,
+            which is of type {type(activation)}.
+            """
+            )
+    return
 
+def _check_generic_input_arg(
+        arg,
+        arg_name,
+        allowed_values,
+        ):
+    if arg not in allowed_values:
+        raise ValueError(
+            f"""
+            Argument '{arg_name}' must be one of: {allowed_values},
+            but {arg} was passed.
+            """
+            )
+    return
 
 def get_kernel_init_fn(
         name: str,
         activation: str,
         ) -> Tuple[ nn.Module, dict ]:
+    if isinstance( activation, nn.Module ):
+        return kernel_init_fn[ name ], dict()
+    # TODO: this means no gain is used for custom activation functions
+        
     if name not in kernel_init_fn.keys():
         raise ValueError(
             f"Argument 'kernel_initializer' must be one of: {kernel_init_fn.keys()}"
             )
     if name in [ 'xavier_uniform', 'xavier_normal' ]:
-        if activation in [ 'gelu', 'elu' ]:
+        if activation in [ 'gelu', 'elu', 'softmax', 'log_softmax' ]:
             warnings.warn(
                 f"""
                 Argument 'kernel_initializer' {name}
@@ -57,7 +100,7 @@ def get_kernel_init_fn(
             gain = nn.init.calculate_gain( activation )
         kernel_init_kw = dict( gain=gain )
     elif name in [ 'kaiming_uniform', 'kaiming_normal' ]:
-        if activation in [ 'gelu', 'elu' ]:
+        if activation in [ 'gelu', 'elu', 'softmax', 'log_softmax' ]:
             raise ValueError(
                 f"""
                 Argument 'kernel_initializer' {name}
@@ -75,6 +118,117 @@ def get_kernel_init_fn(
 
 
 
+class CausalConv1d(nn.Conv1d):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride = 1,
+            dilation = 1,
+            groups = 1,
+            bias = True,
+            buffer = None,
+            lookahead = 0,
+            **kwargs,
+            ):
+        
+        super(CausalConv1d, self).__init__(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            padding = 0,
+            dilation = dilation,
+            groups = groups,
+            bias = bias,
+            **kwargs,
+            )
+        
+        self.pad_len = (kernel_size - 1) * dilation
+        if lookahead > self.pad_len//2:
+            lookahead = self.pad_len//2
+        self.lookahead = lookahead
+
+        self.buffer_len = self.pad_len - self.lookahead
+        #print( 'pad len:', self.pad_len )
+        #print( 'lookahead:', self.lookahead )
+        #print( 'buffer len:', self.buffer_len )
+        
+        if buffer is None:
+            buffer = torch.zeros(
+                1,
+                in_channels,
+                self.pad_len,
+                )
+            
+        self.register_buffer(
+            'buffer',
+            buffer,
+            )
+        
+        return
+    
+    def _forward(self, x):
+        p = nn.ConstantPad1d(
+            ( self.buffer_len, self.lookahead ),
+            0.0,
+            )
+        x = p(x)
+        x = super().forward(x)
+        return x
+
+    def forward(
+            self,
+            x,
+            inference=False,
+            ):
+        if inference:
+            x = self.inference(x)
+        else:
+            x = self._forward(x)
+        return x
+    
+    def inference(self, x):
+        if x.shape[0] != 1:
+            raise ValueError(
+                f"""
+                Streaming inference of CausalConv1D layer only supports
+                a batch size of 1, but batch size is {x.shape[0]}.
+                """
+                )
+        if x.shape[2] < self.lookahead + 1:
+            raise ValueError(
+                f"""
+                Input time dimension {x.shape[2]} is too short for causal
+                inference with lookahead {self.lookahead}. You must pass at
+                least lookhead + 1 time steps ({self.lookahead + 1}).
+                """
+                )
+        x = torch.cat(
+            (self.buffer, x),
+            -1,
+            )
+        if self.lookahead > 0:
+            self.buffer = x[:, :, -(self.pad_len+self.lookahead) : -self.lookahead ]
+        else:
+            self.buffer = x[:, :, -self.buffer_len: ]
+        x = super().forward(x)
+        return x
+    
+    def reset_buffer(self):
+        self.buffer.zero_()
+        if self.buffer.shape[2] != self.pad_len:
+            raise ValueError(
+                f"""
+                Buffer shape {self.buffer.shape} does not match the expected
+                shape (1, {self.in_channels}, {self.pad_len}).
+                """
+                )
+        return
+
+
+
 class TemporalConv1d(nn.Conv1d):
     def __init__(
             self,
@@ -85,55 +239,34 @@ class TemporalConv1d(nn.Conv1d):
             dilation=1,
             groups=1,
             bias=True,
-            causal=True,
+            **kwargs,
             ):
         
-        padding = (kernel_size-1) * dilation# if causal else 0
+        self.pad_len = (kernel_size-1) * dilation
 
         super(TemporalConv1d, self).__init__(
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            groups,
-            bias,
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            padding = self.pad_len // 2,
+            dilation = dilation,
+            groups = groups,
+            bias = bias,
+            **kwargs,
             )
         
-        self.causal = causal
         return
     
-    def forward(self, input):
-        if self.causal:
-            x = F.conv1d(
-                input,
-                self.weight,
-                self.bias,
-                self.stride,
-                self.padding,
-                self.dilation,
-                self.groups,
-                )
-            # Chomp the output to have left padding only (causal padding)
-            x = x[:, :, :-self.padding[0]].contiguous()
-        else:
-            # Implementation of 'same'-type padding (non-causal padding)
+    def forward(self, x, inference=None):
+        # Implementation of 'same'-type padding (non-causal padding)
     
-            # Check if padding has odd length
-            # If so, pad the input one more on the right side
-            if (self.padding[0] % 2 != 0):
-                input = F.pad(input, [0, 1])
+        # Check if pad_len is an odd value
+        # If so, pad the input one more on the right side
+        if (self.pad_len % 2 != 0):
+            x = F.pad(x, [0, 1])
 
-            x = F.conv1d(
-                input,
-                self.weight,
-                self.bias,
-                self.stride,
-                padding=self.padding[0]//2,
-                dilation=self.dilation,
-                groups=self.groups,
-                )
+        x = super(TemporalConv1d, self).forward(x)
 
         return x
 
@@ -155,37 +288,58 @@ class TemporalBlock(nn.Module):
             embedding_shapes,
             embedding_mode,
             use_gate,
+            lookahead,
             ):
         super(TemporalBlock, self).__init__()
         self.use_norm = use_norm
-        self.activation_name = activation
+        self.activation = activation
         self.kernel_initializer = kerner_initializer
         self.embedding_shapes = embedding_shapes
         self.embedding_mode = embedding_mode
         self.use_gate = use_gate
+        self.causal = causal
+        self.lookahead = lookahead
 
         if self.use_gate:
             conv1d_n_outputs = 2 * n_outputs
         else:
             conv1d_n_outputs = n_outputs
 
-        self.conv1 = TemporalConv1d(
-            in_channels=n_inputs,
-            out_channels=conv1d_n_outputs,
-            kernel_size=kernel_size,
-            stride=stride,
-            dilation=dilation,
-            causal=causal,
-            )
+        if self.causal:
+            self.conv1 = CausalConv1d(
+                in_channels=n_inputs,
+                out_channels=conv1d_n_outputs,
+                kernel_size=kernel_size,
+                stride=stride,
+                dilation=dilation,
+                lookahead=self.lookahead,
+                )
 
-        self.conv2 = TemporalConv1d(
-            in_channels=n_outputs,
-            out_channels=n_outputs,
-            kernel_size=kernel_size,
-            stride=stride,
-            dilation=dilation,
-            causal=causal,
-            )
+            self.conv2 = CausalConv1d(
+                in_channels=n_outputs,
+                out_channels=n_outputs,
+                kernel_size=kernel_size,
+                stride=stride,
+                dilation=dilation,
+                lookahead=self.lookahead,
+                )
+
+        else:
+            self.conv1 = TemporalConv1d(
+                in_channels=n_inputs,
+                out_channels=conv1d_n_outputs,
+                kernel_size=kernel_size,
+                stride=stride,
+                dilation=dilation,
+                )
+
+            self.conv2 = TemporalConv1d(
+                in_channels=n_outputs,
+                out_channels=n_outputs,
+                kernel_size=kernel_size,
+                stride=stride,
+                dilation=dilation,
+                )
         
         if use_norm == 'batch_norm':
             if self.use_gate:
@@ -208,14 +362,22 @@ class TemporalBlock(nn.Module):
             self.norm1 = None
             self.norm2 = None
 
-        self.activation1 = activation_fn[ self.activation_name ]()
-        self.activation2 = activation_fn[ self.activation_name ]()
-        self.activation_final = activation_fn[ self.activation_name ]()
+        if isinstance( self.activation, str ):
+            self.activation1 = activation_fn[ self.activation ]()
+            self.activation2 = activation_fn[ self.activation ]()
+            self.activation_final = activation_fn[ self.activation ]()
+        else:
+            self.activation1 = self.activation()
+            self.activation2 = self.activation()
+            self.activation_final = self.activation()
+
+        if self.use_gate:
+            self.activation1 = nn.GLU(dim=1)
 
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         
-        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
+        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1, padding=0) if n_inputs != n_outputs else None
 
         if self.embedding_shapes is not None:
             if self.use_gate:
@@ -234,8 +396,6 @@ class TemporalBlock(nn.Module):
                 out_channels = embedding_layer_n_outputs,
                 kernel_size = 1,
                 )
-            
-        self.glu = nn.GLU(dim=1)
         
         self.init_weights()
         return
@@ -243,7 +403,7 @@ class TemporalBlock(nn.Module):
     def init_weights(self):
         initialize, kwargs = get_kernel_init_fn(
             name=self.kernel_initializer,
-            activation=self.activation_name,
+            activation=self.activation,
             )
         initialize(
             self.conv1.weight,
@@ -288,8 +448,8 @@ class TemporalBlock(nn.Module):
                 raise ValueError(
                     f"""
                     Embedding shape {embedding.shape} passed to 'forward' does not 
-                    match the expected shape {expected_shape} provided as input argument
-                    'embedding_shapes'.
+                    match the expected shape {expected_shape} provided as input to
+                    argument 'embedding_shapes'.
                     """
                     )
             if len( embedding.shape ) == 2:
@@ -300,8 +460,8 @@ class TemporalBlock(nn.Module):
                 if embedding.shape[2] != x.shape[2]:
                     raise ValueError(
                         f"""
-                        Embedding time dimension {embedding.shape[2]} does not match
-                        input time dimension {x.shape[2]}
+                        Embedding time dimension {embedding.shape[2]} does not
+                        match the input time dimension {x.shape[2]}
                         """
                         )
                 e.append( embedding )
@@ -321,26 +481,40 @@ class TemporalBlock(nn.Module):
             self,
             x,
             embeddings,
+            inference,
             ):
-        out = self.conv1(x)
+        out = self.conv1(x, inference=inference)
         out = self.apply_norm( self.norm1, out )
 
         if embeddings is not None:
             out = self.apply_embeddings( out, embeddings )
 
-        if self.use_gate:
-            out = self.glu(out)
-        else:
-            out = self.activation1(out)
+        out = self.activation1(out)
         out = self.dropout1(out)
 
-        out = self.conv2(out)
+        out = self.conv2(out, inference=inference)
         out = self.apply_norm( self.norm2, out )
         out = self.activation2(out)
         out = self.dropout2(out)
 
         res = x if self.downsample is None else self.downsample(x)
         return self.activation_final(out + res), out
+    
+    def inference(
+            self,
+            x,
+            embeddings,
+            ):
+        if not self.causal:
+            raise ValueError(
+                """
+                This streaming inference mode is made for blockwise causal
+                processing and thus, is only supported for causal networks.
+                However, you selected a non-causal network.
+                """
+                )
+        x, out = self.forward(x, embeddings, inference=True)
+        return x, out
 
 
 
@@ -362,32 +536,27 @@ class TCN(nn.Module):
             embedding_shapes: Optional[ ArrayLike ] = None,
             embedding_mode: str = 'add',
             use_gate: bool = False,
+            lookahead: int = 0,
+            output_projection: Optional[ int ] = None,
+            output_activation: Optional[ str ] = None,
             ):
         super(TCN, self).__init__()
+
         if dilations is not None and len(dilations) != len(num_channels):
             raise ValueError("Length of dilations must match length of num_channels")
         
         self.allowed_norm_values = ['batch_norm', 'layer_norm', 'weight_norm', None]
-        if use_norm not in self.allowed_norm_values:
-            raise ValueError(
-                f"Argument 'use_norm' must be one of: {self.allowed_norm_values}"
-                )
-        
-        if activation not in activation_fn.keys():
-            raise ValueError(
-                f"Argument 'activation' must be one of: {activation_fn.keys()}"
-                )
-        
-        if kernel_initializer not in kernel_init_fn.keys():
-            raise ValueError(
-                f"Argument 'kernel_initializer' must be one of: {kernel_init_fn.keys()}"
-                )
-        
         self.allowed_input_shapes = ['NCL', 'NLC']
-        if input_shape not in self.allowed_input_shapes:
-            raise ValueError(
-                f"Argument 'input_shape' must be one of: {self.allowed_input_shapes}"
-                )
+
+        _check_generic_input_arg( causal, 'causal', [True, False] )
+        _check_generic_input_arg( use_norm, 'use_norm', self.allowed_norm_values )
+        _check_activation_arg(activation, 'activation')
+        _check_generic_input_arg( kernel_initializer, 'kernel_initializer', kernel_init_fn.keys() )
+        _check_generic_input_arg( use_skip_connections, 'use_skip_connections', [True, False] )
+        _check_generic_input_arg( input_shape, 'input_shape', self.allowed_input_shapes )
+        _check_generic_input_arg( embedding_mode, 'embedding_mode', ['add', 'concat'] )
+        _check_generic_input_arg( use_gate, 'use_gate', [True, False] )
+        _check_activation_arg(output_activation, 'output_activation')
 
         if dilations is None:
             if dilation_reset is None:
@@ -401,12 +570,17 @@ class TCN(nn.Module):
                     ]
             
         self.dilations = dilations
-        self.activation_name = activation
+        self.activation = activation
         self.kernel_initializer = kernel_initializer
         self.use_skip_connections = use_skip_connections
         self.input_shape = input_shape
         self.embedding_shapes = embedding_shapes
+        self.embedding_mode = embedding_mode
         self.use_gate = use_gate
+        self.causal = causal
+        self.lookahead = lookahead
+        self.output_projection = output_projection
+        self.output_activation = output_activation
 
         if embedding_shapes is not None:
             if isinstance(embedding_shapes, Iterable):
@@ -416,8 +590,10 @@ class TCN(nn.Module):
                             shape = tuple( shape )
                         except Exception as e:
                             raise ValueError(
-                                f"Each shape in argument 'embedding_shapes' must be an Iterable of tuples. "
-                                f"Tried to convert {shape} to tuple, but failed with error: {e}"
+                                f"""
+                                Each shape in argument 'embedding_shapes' must be an Iterable of tuples.
+                                Tried to convert {shape} to tuple, but failed with error: {e}
+                                """
                                 )
                     if len( shape ) not in [ 1, 2 ]:
                         raise ValueError(
@@ -429,15 +605,12 @@ class TCN(nn.Module):
                             )
             else:
                 raise ValueError(
-                    f"Argument 'embedding_shapes' must be a list of tuples, "
-                    f"but is {type(embedding_shapes)}"
+                    f"""
+                    Argument 'embedding_shapes' must be an Iterable of tuples,
+                    but is {type(embedding_shapes)}.
+                    """
                     )
             
-        if embedding_mode not in [ 'add', 'concat' ]:
-            raise ValueError(
-                f"Argument 'embedding_mode' must be one of: ['add', 'concat']"
-                )
-        self.embedding_mode = embedding_mode
 
         if use_skip_connections:
             self.downsample_skip_connection = nn.ModuleList()
@@ -450,7 +623,10 @@ class TCN(nn.Module):
                 else:
                     self.downsample_skip_connection.append( None )
             self.init_skip_connection_weights()
-            self.activation_out = activation_fn[ self.activation_name ]()
+            if isinstance( self.activation, str ):
+                self.activation_skip_out = activation_fn[ self.activation ]()
+            else:
+                self.activation_skip_out = self.activation()
         else:
             self.downsample_skip_connection = None
         
@@ -478,16 +654,37 @@ class TCN(nn.Module):
                     embedding_shapes=self.embedding_shapes,
                     embedding_mode=self.embedding_mode,
                     use_gate=self.use_gate,
+                    lookahead=self.lookahead,
                     )
                 ]
 
         self.network = nn.ModuleList(layers)
+
+        if self.output_projection is not None:
+            self.projection_out = nn.Conv1d(
+                in_channels=num_channels[-1],
+                out_channels=self.output_projection,
+                kernel_size=1,
+                )
+        else:
+            self.projection_out = None
+
+        if self.output_activation is not None:
+            if isinstance( self.output_activation, str ):
+                self.activation_out = activation_fn[ self.output_activation ]()
+            else:
+                self.activation_out = self.output_activation()
+        else:
+            self.activation_out = None #nn.Identity()
+
+        if self.causal:
+            self.reset_buffers()
         return
     
     def init_skip_connection_weights(self):
         initialize, kwargs = get_kernel_init_fn(
             name=self.kernel_initializer,
-            activation=self.activation_name,
+            activation=self.activation,
             )
         for layer in self.downsample_skip_connection:
             if layer is not None:
@@ -501,7 +698,16 @@ class TCN(nn.Module):
             self,
             x,
             embeddings=None,
+            inference=False,
             ):
+        if inference and not self.causal:
+            raise ValueError(
+                """
+                This streaming inference mode is made for blockwise causal
+                processing and thus, is only supported for causal networks.
+                However, you selected a non-causal network.
+                """
+                )
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         if self.use_skip_connections:
@@ -509,18 +715,51 @@ class TCN(nn.Module):
             # Adding skip connections from each layer to the output
             # Excluding the last layer, as it would not skip trainable weights
             for index, layer in enumerate( self.network ):
-                x, skip_out = layer(x, embeddings )
+                x, skip_out = layer(
+                    x,
+                    embeddings=embeddings,
+                    inference=inference,
+                    )
                 if self.downsample_skip_connection[ index ] is not None:
                     skip_out = self.downsample_skip_connection[ index ]( skip_out )
                 if index < len( self.network ) - 1:
                     skip_connections.append( skip_out )
             skip_connections.append( x )
             x = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
-            x = self.activation_out( x )
+            x = self.activation_skip_out( x )
         else:
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
-                x, _ = layer( x, embeddings )
+                x, _ = layer(
+                    x,
+                    embeddings=embeddings,
+                    inference=inference,
+                    )
+        if self.projection_out is not None:
+            x = self.projection_out( x )
+        if self.activation_out is not None:
+            x = self.activation_out( x )
+        if inference and self.lookahead > 0:
+            x = x[ :, :, self.lookahead: ]
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x
+    
+    def inference(
+            self,
+            x,
+            embeddings=None,
+            ):
+        x = self.forward(
+            x,
+            embeddings=embeddings,
+            inference=True,
+            )
+        return x
+    
+    def reset_buffers(self):
+        def _reset_buffer(x):
+            if isinstance(x, CausalConv1d):
+                x.reset_buffer()
+        self.apply(_reset_buffer)
+        return
