@@ -1,9 +1,20 @@
+import numpy as np
+import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils import weight_norm
-import numpy as np
-import warnings
+# Try to import new weight_norm from torch.nn.utils.parametrizations
+# But also keep the deprecated version for compatibility
+try:
+    from torch.nn.utils.parametrizations import weight_norm
+except ImportError:
+    from torch.nn.utils import weight_norm
+    warnings.warn(
+        """
+        The deprecated weight_norm from torch.nn.utils.weight_norm was imported.
+        Update your PyTorch version to get rid of this warning.
+        """
+        )
 
 from typing import Tuple
 from typing import Union

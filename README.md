@@ -39,7 +39,9 @@ model = TCN(
     embedding_shapes: Optional[ ArrayLike ] = None,
     embedding_mode: str = 'add',
     use_gate: bool = False,
+    lookahead: int = 0,
     output_projection: Optional[ int ] = None,
+    output_activation: Optional[ str ] = None,
 )
 # Continue to train/use model for your task
 ```
