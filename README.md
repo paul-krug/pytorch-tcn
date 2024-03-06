@@ -28,7 +28,7 @@ model = TCN(
     num_channels: ArrayLike,
     kernel_size: int = 4,
     dilations: Optional[ ArrayLike ] = None,
-    dilaton_reset: Optional[ int ] = None,
+    dilation_reset: Optional[ int ] = None,
     dropout: float = 0.1,
     causal: bool = True,
     use_norm: str = 'weight_norm',
