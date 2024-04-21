@@ -22,6 +22,8 @@ from typing import Optional
 from numpy.typing import ArrayLike
 from collections.abc import Iterable
 
+from .convolution import TemporalConv1d
+
 
 activation_fn = dict(
     relu=nn.ReLU,
@@ -127,162 +129,6 @@ def get_kernel_init_fn(
     
     return kernel_init_fn[ name ], kernel_init_kw
 
-
-
-class CausalConv1d(nn.Conv1d):
-    def __init__(
-            self,
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride = 1,
-            dilation = 1,
-            groups = 1,
-            bias = True,
-            buffer = None,
-            lookahead = 0,
-            **kwargs,
-            ):
-        
-        super(CausalConv1d, self).__init__(
-            in_channels = in_channels,
-            out_channels = out_channels,
-            kernel_size = kernel_size,
-            stride = stride,
-            padding = 0,
-            dilation = dilation,
-            groups = groups,
-            bias = bias,
-            **kwargs,
-            )
-        
-        self.pad_len = (kernel_size - 1) * dilation
-        if lookahead > self.pad_len//2:
-            lookahead = self.pad_len//2
-        self.lookahead = lookahead
-
-        self.buffer_len = self.pad_len - self.lookahead
-        #print( 'pad len:', self.pad_len )
-        #print( 'lookahead:', self.lookahead )
-        #print( 'buffer len:', self.buffer_len )
-        
-        if buffer is None:
-            buffer = torch.zeros(
-                1,
-                in_channels,
-                self.pad_len,
-                )
-            
-        self.register_buffer(
-            'buffer',
-            buffer,
-            )
-        
-        return
-    
-    def _forward(self, x):
-        p = nn.ConstantPad1d(
-            ( self.buffer_len, self.lookahead ),
-            0.0,
-            )
-        x = p(x)
-        x = super().forward(x)
-        return x
-
-    def forward(
-            self,
-            x,
-            inference=False,
-            ):
-        if inference:
-            x = self.inference(x)
-        else:
-            x = self._forward(x)
-        return x
-    
-    def inference(self, x):
-        if x.shape[0] != 1:
-            raise ValueError(
-                f"""
-                Streaming inference of CausalConv1D layer only supports
-                a batch size of 1, but batch size is {x.shape[0]}.
-                """
-                )
-        if x.shape[2] < self.lookahead + 1:
-            raise ValueError(
-                f"""
-                Input time dimension {x.shape[2]} is too short for causal
-                inference with lookahead {self.lookahead}. You must pass at
-                least lookhead + 1 time steps ({self.lookahead + 1}).
-                """
-                )
-        x = torch.cat(
-            (self.buffer, x),
-            -1,
-            )
-        if self.lookahead > 0:
-            self.buffer = x[:, :, -(self.pad_len+self.lookahead) : -self.lookahead ]
-        else:
-            self.buffer = x[:, :, -self.buffer_len: ]
-        x = super().forward(x)
-        return x
-    
-    def reset_buffer(self):
-        self.buffer.zero_()
-        if self.buffer.shape[2] != self.pad_len:
-            raise ValueError(
-                f"""
-                Buffer shape {self.buffer.shape} does not match the expected
-                shape (1, {self.in_channels}, {self.pad_len}).
-                """
-                )
-        return
-
-
-
-class TemporalConv1d(nn.Conv1d):
-    def __init__(
-            self,
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride=1,
-            dilation=1,
-            groups=1,
-            bias=True,
-            **kwargs,
-            ):
-        
-        self.pad_len = (kernel_size-1) * dilation
-
-        super(TemporalConv1d, self).__init__(
-            in_channels = in_channels,
-            out_channels = out_channels,
-            kernel_size = kernel_size,
-            stride = stride,
-            padding = self.pad_len // 2,
-            dilation = dilation,
-            groups = groups,
-            bias = bias,
-            **kwargs,
-            )
-        
-        return
-    
-    def forward(self, x, inference=None):
-        # Implementation of 'same'-type padding (non-causal padding)
-    
-        # Check if pad_len is an odd value
-        # If so, pad the input one more on the right side
-        if (self.pad_len % 2 != 0):
-            x = F.pad(x, [0, 1])
-
-        x = super(TemporalConv1d, self).forward(x)
-
-        return x
-
-
-
 class TemporalBlock(nn.Module):
     def __init__(
             self,
@@ -299,7 +145,7 @@ class TemporalBlock(nn.Module):
             embedding_shapes,
             embedding_mode,
             use_gate,
-            lookahead,
+            #lookahead,
             ):
         super(TemporalBlock, self).__init__()
         self.use_norm = use_norm
@@ -309,48 +155,32 @@ class TemporalBlock(nn.Module):
         self.embedding_mode = embedding_mode
         self.use_gate = use_gate
         self.causal = causal
-        self.lookahead = lookahead
+        #self.lookahead = lookahead
 
         if self.use_gate:
             conv1d_n_outputs = 2 * n_outputs
         else:
             conv1d_n_outputs = n_outputs
 
-        if self.causal:
-            self.conv1 = CausalConv1d(
-                in_channels=n_inputs,
-                out_channels=conv1d_n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                lookahead=self.lookahead,
-                )
+        self.conv1 = TemporalConv1d(
+            in_channels=n_inputs,
+            out_channels=conv1d_n_outputs,
+            kernel_size=kernel_size,
+            stride=stride,
+            dilation=dilation,
+            causal=self.causal,
+            #lookahead=self.lookahead,
+            )
 
-            self.conv2 = CausalConv1d(
-                in_channels=n_outputs,
-                out_channels=n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                lookahead=self.lookahead,
-                )
-
-        else:
-            self.conv1 = TemporalConv1d(
-                in_channels=n_inputs,
-                out_channels=conv1d_n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                )
-
-            self.conv2 = TemporalConv1d(
-                in_channels=n_outputs,
-                out_channels=n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                )
+        self.conv2 = TemporalConv1d(
+            in_channels=n_outputs,
+            out_channels=n_outputs,
+            kernel_size=kernel_size,
+            stride=stride,
+            dilation=dilation,
+            causal=self.causal,
+            #lookahead=self.lookahead,
+            )
         
         if use_norm == 'batch_norm':
             if self.use_gate:
@@ -547,7 +377,7 @@ class TCN(nn.Module):
             embedding_shapes: Optional[ ArrayLike ] = None,
             embedding_mode: str = 'add',
             use_gate: bool = False,
-            lookahead: int = 0,
+            #lookahead: int = 0,
             output_projection: Optional[ int ] = None,
             output_activation: Optional[ str ] = None,
             ):
@@ -589,7 +419,7 @@ class TCN(nn.Module):
         self.embedding_mode = embedding_mode
         self.use_gate = use_gate
         self.causal = causal
-        self.lookahead = lookahead
+        #self.lookahead = lookahead
         self.output_projection = output_projection
         self.output_activation = output_activation
 
@@ -665,7 +495,7 @@ class TCN(nn.Module):
                     embedding_shapes=self.embedding_shapes,
                     embedding_mode=self.embedding_mode,
                     use_gate=self.use_gate,
-                    lookahead=self.lookahead,
+                    #lookahead=self.lookahead,
                     )
                 ]
 
@@ -750,8 +580,8 @@ class TCN(nn.Module):
             x = self.projection_out( x )
         if self.activation_out is not None:
             x = self.activation_out( x )
-        if inference and self.lookahead > 0:
-            x = x[ :, :, self.lookahead: ]
+        #if inference and self.lookahead > 0:
+        #    x = x[ :, :, self.lookahead: ]
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
         return x
@@ -770,7 +600,8 @@ class TCN(nn.Module):
     
     def reset_buffers(self):
         def _reset_buffer(x):
-            if isinstance(x, CausalConv1d):
-                x.reset_buffer()
+            if isinstance(x, TemporalConv1d):
+                if hasattr(x, 'reset_buffer'):
+                    x.reset_buffer()
         self.apply(_reset_buffer)
         return
