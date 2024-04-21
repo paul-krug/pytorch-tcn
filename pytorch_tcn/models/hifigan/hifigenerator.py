@@ -17,11 +17,10 @@ class ResBlock( BaseTCN ):
     def __init__(
             self,
             channels,
-            kernel_size,#=3,
-            dilation,#=(1, 3, 5),
+            kernel_size,
+            dilation,
             resblock_type,
             causal,
-            lookahead,
             ):
         super(ResBlock, self).__init__()
 
@@ -39,13 +38,12 @@ class ResBlock( BaseTCN ):
                     stride=1,
                     dilation=d,
                     causal=causal,
-                    lookahead=lookahead,
                     )
                 )
             for d in dilation
             ]
         )
-        self.convs1.apply( super(ResBlock).init_weights )
+        #self.convs1.apply( super(ResBlock).init_weights )
 
         if resblock_type == 2:
             self.convs2 = nn.ModuleList([
@@ -57,12 +55,13 @@ class ResBlock( BaseTCN ):
                         stride=1,
                         dilation=1,
                         causal=causal,
-                        lookahead=lookahead,
                         )
                     )
                 for _ in dilation
             ])
-            self.convs2.apply( super(ResBlock).init_weights )
+            #self.convs2.apply( super(ResBlock).init_weights )
+
+        self.init_weights()
         return
     
     def forward(
@@ -107,11 +106,8 @@ class HifiGenerator( BaseTCN ):
             resblock_dilation_sizes,
             resblock_type=2,
             causal=False,
-            lookahead=0,
             ):
         super(HifiGenerator, self).__init__()
-
-        #resblock = CausalResBlock2 if resblock_type == 2 else CausalResBlock1
 
         self.upsample_initial_channel = upsample_initial_channel
         self.upsample_kernel_sizes = upsample_kernel_sizes
@@ -129,7 +125,6 @@ class HifiGenerator( BaseTCN ):
                 kernel_size=kernel_size,
                 stride=1,
                 causal=causal,
-                lookahead=lookahead,
                 )
         )
 
@@ -143,7 +138,6 @@ class HifiGenerator( BaseTCN ):
                         kernel_size = k,
                         stride = u,
                         causal=causal,
-                        lookahead=lookahead,
                     )
                 )
             )
@@ -161,11 +155,13 @@ class HifiGenerator( BaseTCN ):
                         dilation=d,
                         resblock_type=resblock_type,
                         causal=causal,
-                        lookahead=lookahead,
                         )
                     )
 
-        self.recp_numkernels = torch.tensor(1.0 / self.num_kernels, dtype=torch.float32)
+        self.recp_numkernels = torch.tensor(
+            1.0 / self.num_kernels,
+            dtype=torch.float32,
+            )
     
         self.conv_post = weight_norm(
             Conv1d(
@@ -174,7 +170,6 @@ class HifiGenerator( BaseTCN ):
                 kernel_size=kernel_size,
                 stride=1,
                 causal=causal,
-                lookahead=lookahead,
                 )
             )
         
@@ -187,10 +182,12 @@ class HifiGenerator( BaseTCN ):
             x,
             inference = False,
             ):
+        
         x = self.conv_pre(
             x=x,
             inference=inference,
             )
+        
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, LRELU_SLOPE)
             x = self.ups[i](
@@ -207,10 +204,12 @@ class HifiGenerator( BaseTCN ):
                     inference=inference,
                     )
             x = xs * self.recp_numkernels
+
         x = F.leaky_relu(x)
         x = self.conv_post(
             x=x,
             inference=inference,
             )
         x = torch.tanh(x)
+
         return x
