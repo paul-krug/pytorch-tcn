@@ -1,0 +1,1 @@
+from pytorch_tcn.models.hifigan import HifiGenerator as Generator

@@ -1,3 +1,33 @@
+
+"""
+This implementation is based on the following repository:
+https://github.com/jik876/hifi-gan
+
+The original code is licensed under the MIT License:
+
+MIT License
+
+Copyright (c) 2020 Jungil Kong
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
@@ -96,15 +126,17 @@ class ResBlock( BaseTCN ):
 class HifiGenerator( BaseTCN ):
     def __init__(
             self,
-            in_channels,#80
-            out_channels,#1
-            kernel_size,#7
+            in_channels,
+            out_channels,
+            pre_conv_kernel_size,
+            post_conv_kernel_size,
             upsample_initial_channel,
             upsample_rates,
             upsample_kernel_sizes,
             resblock_kernel_sizes,
             resblock_dilation_sizes,
             resblock_type=2,
+            embedding_dim=0,
             causal=False,
             ):
         super(HifiGenerator, self).__init__()
@@ -122,7 +154,7 @@ class HifiGenerator( BaseTCN ):
             Conv1d(
                 in_channels=in_channels,
                 out_channels=upsample_initial_channel,
-                kernel_size=kernel_size,
+                kernel_size=pre_conv_kernel_size,
                 stride=1,
                 causal=causal,
                 )
@@ -167,10 +199,17 @@ class HifiGenerator( BaseTCN ):
             Conv1d(
                 in_channels=ch,
                 out_channels=out_channels,
-                kernel_size=kernel_size,
+                kernel_size=post_conv_kernel_size,
                 stride=1,
                 causal=causal,
                 )
+            )
+        
+        if embedding_dim != 0:
+            self.cond = nn.Conv1d(
+                embedding_dim,
+                upsample_initial_channel,
+                1,
             )
         
         self.init_weights()
@@ -180,6 +219,7 @@ class HifiGenerator( BaseTCN ):
     def forward(
             self,
             x,
+            embedding = None,
             inference = False,
             ):
         
@@ -187,6 +227,10 @@ class HifiGenerator( BaseTCN ):
             x=x,
             inference=inference,
             )
+        if embedding is not None:
+            x = x + self.cond(
+                embedding.unsqueeze(2)
+                )
         
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, LRELU_SLOPE)
