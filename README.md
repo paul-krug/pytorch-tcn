@@ -42,6 +42,7 @@ model = TCN(
     lookahead: int = 0,
     output_projection: Optional[ int ] = None,
     output_activation: Optional[ str ] = None,
+    force_residual_conv: bool = False,
 )
 # Continue to train/use model for your task
 ```
@@ -56,7 +57,7 @@ The order of output dimensions will be the same as for the input tensors.
 - `num_inputs`: The number of input channels, should be equal to the feature dimension of your data.
 - `num_channels`: A list or array that contains the number of feature channels in each residual block of the network.
 - `kernel_size`: The size of the convolution kernel used by the convolutional layers. Good starting points may be 2-8. If the prediction task requires large context sizes, larger kernel size values may be appropriate.
-- `dilations`: If None, the dilation sizes will be calculated via 2^(1...n) for the residual blocks 1 to n. This is the standard way to do it. However, if you need a custom list of dilation sizes for whatever reason you could pass such a list or array to the argument.
+- `dilations`: If None, the dilation sizes will be calculated via 2^(1...n) for the residual blocks 1 to n. This is the standard way to do it. However, if you need a custom list of dilation sizes for whatever reason you could pass such a list or array to the argument. Elements of this arraylike argument may either be a single integer or another arraylike. If an element is a single integer, the corresponding TCN block will have a network architecture as described in figure 1b) of [Bai et al.](https://arxiv.org/abs/1803.01271). If an element is itself an arraylike, the corresponding TCN block will have an architecture similar to what is described in figure 2 of [Pinto et al.](https://www.mdpi.com/2079-9292/10/13/1518#) with multiple dilated convolutions of different dilation rates within the same TCN block.
 - `dilation_reset`: For deep TCNs the dilation size should be reset periodically, otherwise it grows exponentially and the corresponding padding becomes so large that memory overflow occurs (see [Van den Oord et al.](https://arxiv.org/pdf/1609.03499.pdf)). E.g. 'dilation_reset=16' would reset the dilation size once it reaches a value of 16, so the dilation sizes would look like this: [ 1, 2, 4, 8, 16, 1, 2, 4, ...].
 - `dropout`: Is a float value between 0 and 1 that indicates the amount of inputs which are randomly set to zero during training. Usually, 0.1 is a good starting point.
 - `causal`: If 'True', the dilated convolutions will be causal, which means that future information is ignored in the prediction task. This is important for real-time predictions. If set to 'False', future context will be considered for predictions.
@@ -71,6 +72,7 @@ The order of output dimensions will be the same as for the input tensors.
 - `lookahead`: If not 0, causal TCNs will use a lookahead on future time frames to increase the modelling accuracy. The lookahead parameter specifies the number of future time steps that will be processed influence the prediction for a specific time step. Default is 0. Will be ignored for non-causal networks which already have the maximum lookahead possible.
 - `output_projection`: If not None, the output of the TCN will be projected to the specified dimension via a 1x1 convolution. This may be useful if the output of the TCN is supposed to be of a different dimension than the input or if the last activation should be linear. If None, no projection will be performed. The default is 'None'.
 - `output_activation`: If not None, the output of the TCN will be passed through the specified activation function. This maybe useful to etablish a classification head via softmax etc. If None, no activation will be performed. The default is 'None'.
+- `force_residual_conv`: If 'True', the optional 1x1 Convolution will always be calculated on the residual of each TCN block, even if the amount of input and output channels of the TCN block are identical.
 
 ## Streaming Inference
 

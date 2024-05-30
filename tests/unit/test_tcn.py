@@ -71,6 +71,9 @@ class TestTCN(unittest.TestCase):
                 kwargs = dict(
                     dilations = [
                         [1, 2, 3, 4, 1, 2, 3, 4],
+                        [[1, 2], [2, 4], [3, 6], [4, 8], [1, 2], [2, 4], [3, 6], [4, 8]],
+                        [[1, 2], [2, 4], [3, 6], [4, 8], 1, 2, 3, 4],
+                        [1, 2, 3, 4, [1, 2], [2, 4], [3, 6], [4, 8]],
                         None,
                     ],
                 ),
@@ -161,6 +164,11 @@ class TestTCN(unittest.TestCase):
                     use_gate = [True, False],
                 ),
                 expected_error = ValueError,
+            ),
+            # Test different values for force_residual_conv
+            dict(
+                kwargs = dict( force_residual_conv = [True, False] ),
+                expected_error = None,
             ),
         ]
 

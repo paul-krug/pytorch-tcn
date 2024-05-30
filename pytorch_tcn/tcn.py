@@ -295,79 +295,89 @@ class TemporalBlock(nn.Module):
             causal,
             use_norm,
             activation,
-            kerner_initializer,
+            kernel_initializer,
             embedding_shapes,
             embedding_mode,
             use_gate,
             lookahead,
+            force_residual_conv,
             ):
         super(TemporalBlock, self).__init__()
         self.use_norm = use_norm
         self.activation = activation
-        self.kernel_initializer = kerner_initializer
+        self.kernel_initializer = kernel_initializer
         self.embedding_shapes = embedding_shapes
         self.embedding_mode = embedding_mode
         self.use_gate = use_gate
         self.causal = causal
         self.lookahead = lookahead
 
-        if self.use_gate:
-            conv1d_n_outputs = 2 * n_outputs
-        else:
-            conv1d_n_outputs = n_outputs
+        if isinstance(dilation, int):
+            dilation = [dilation]
 
-        if self.causal:
-            self.conv1 = CausalConv1d(
-                in_channels=n_inputs,
-                out_channels=conv1d_n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                lookahead=self.lookahead,
-                )
+        n_multiplier_gate = 2 if self.use_gate else 1
+        conv1d_n_outputs = n_multiplier_gate * n_outputs
 
-            self.conv2 = CausalConv1d(
-                in_channels=n_outputs,
-                out_channels=n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                lookahead=self.lookahead,
-                )
-
-        else:
-            self.conv1 = TemporalConv1d(
-                in_channels=n_inputs,
-                out_channels=conv1d_n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                )
-
-            self.conv2 = TemporalConv1d(
-                in_channels=n_outputs,
-                out_channels=n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                )
-        
-        if use_norm == 'batch_norm':
-            if self.use_gate:
-                self.norm1 = nn.BatchNorm1d(2 * n_outputs)
+        self.conv1 = []
+        for i in range(len(dilation)):
+            if self.causal:
+                self.conv1 += [
+                    CausalConv1d(
+                        in_channels=n_inputs,
+                        out_channels=conv1d_n_outputs,
+                        kernel_size=kernel_size,
+                        stride=stride,
+                        dilation=dilation[i],
+                        lookahead=self.lookahead,
+                    )
+                ]
             else:
-                self.norm1 = nn.BatchNorm1d(n_outputs)
+                self.conv1 += [
+                    TemporalConv1d(
+                        in_channels=n_inputs,
+                        out_channels=conv1d_n_outputs,
+                        kernel_size=kernel_size,
+                        stride=stride,
+                        dilation=dilation[i],
+                    )
+                ]
+
+        if len(dilation) == 1:
+            if self.causal:
+                self.conv2 = CausalConv1d(
+                    in_channels=n_outputs,
+                    out_channels=n_outputs,
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    dilation=dilation[0],
+                    lookahead=self.lookahead,
+                    )
+            else:
+                self.conv2 = TemporalConv1d(
+                    in_channels=n_outputs,
+                    out_channels=n_outputs,
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    dilation=dilation[0],
+                    )
+        else:
+            self.conv2 = nn.Conv1d(
+                in_channels=n_outputs * len(dilation),
+                out_channels=n_outputs,
+                kernel_size=1
+            )
+
+        n_norm1 = n_outputs * n_multiplier_gate * len(dilation)
+        if use_norm == 'batch_norm':
+            self.norm1 = nn.BatchNorm1d(n_norm1)
             self.norm2 = nn.BatchNorm1d(n_outputs)
         elif use_norm == 'layer_norm':
-            if self.use_gate:
-                self.norm1 = nn.LayerNorm(2 * n_outputs)
-            else:
-                self.norm1 = nn.LayerNorm(n_outputs)
+            self.norm1 = nn.LayerNorm(n_norm1)
             self.norm2 = nn.LayerNorm(n_outputs)
         elif use_norm == 'weight_norm':
             self.norm1 = None
             self.norm2 = None
-            self.conv1 = weight_norm(self.conv1)
+            self.conv1 = [weight_norm(self.conv1[i]) for i in range(len(dilation))]
             self.conv2 = weight_norm(self.conv2)
         elif use_norm is None:
             self.norm1 = None
@@ -387,14 +397,12 @@ class TemporalBlock(nn.Module):
 
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
-        
-        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1, padding=0) if n_inputs != n_outputs else None
+
+        do_downsample = n_inputs != n_outputs or force_residual_conv
+        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1, padding=0) if do_downsample else None
 
         if self.embedding_shapes is not None:
-            if self.use_gate:
-                embedding_layer_n_outputs = 2 * n_outputs
-            else:
-                embedding_layer_n_outputs = n_outputs
+            embedding_layer_n_outputs = n_outputs * n_multiplier_gate * len(dilation)
 
             self.embedding_projection_1 = nn.Conv1d(
                 in_channels = sum( [ shape[0] for shape in self.embedding_shapes ] ),
@@ -416,10 +424,11 @@ class TemporalBlock(nn.Module):
             name=self.kernel_initializer,
             activation=self.activation,
             )
-        initialize(
-            self.conv1.weight,
-            **kwargs
-            )
+        for i in range(len(self.conv1)):
+            initialize(
+                self.conv1[i].weight,
+                **kwargs
+                )
         initialize(
             self.conv2.weight,
             **kwargs
@@ -494,8 +503,9 @@ class TemporalBlock(nn.Module):
             embeddings,
             inference,
             ):
-        out = self.conv1(x, inference=inference)
-        out = self.apply_norm( self.norm1, out )
+        out = [self.conv1[i](x, inference=inference) for i in range(len(self.conv1))]
+        out = torch.cat(out, dim=1)
+        out = self.apply_norm(self.norm1, out)
 
         if embeddings is not None:
             out = self.apply_embeddings( out, embeddings )
@@ -503,7 +513,7 @@ class TemporalBlock(nn.Module):
         out = self.activation1(out)
         out = self.dropout1(out)
 
-        out = self.conv2(out, inference=inference)
+        out = self.conv2(out, inference=inference) if len(self.conv1) == 1 else self.conv2(out)
         out = self.apply_norm( self.norm2, out )
         out = self.activation2(out)
         out = self.dropout2(out)
@@ -550,6 +560,7 @@ class TCN(nn.Module):
             lookahead: int = 0,
             output_projection: Optional[ int ] = None,
             output_activation: Optional[ str ] = None,
+            force_residual_conv: bool = False,
             ):
         super(TCN, self).__init__()
 
@@ -661,11 +672,12 @@ class TCN(nn.Module):
                     causal=causal,
                     use_norm=use_norm,
                     activation=activation,
-                    kerner_initializer=self.kernel_initializer,
+                    kernel_initializer=self.kernel_initializer,
                     embedding_shapes=self.embedding_shapes,
                     embedding_mode=self.embedding_mode,
                     use_gate=self.use_gate,
                     lookahead=self.lookahead,
+                    force_residual_conv=force_residual_conv
                     )
                 ]
 
