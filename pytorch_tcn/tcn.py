@@ -318,10 +318,10 @@ class TemporalBlock(nn.Module):
         n_multiplier_gate = 2 if self.use_gate else 1
         conv1d_n_outputs = n_multiplier_gate * n_outputs
 
-        self.conv1 = []
+        conv1 = []
         for i in range(len(dilation)):
             if self.causal:
-                self.conv1 += [
+                conv1 += [
                     CausalConv1d(
                         in_channels=n_inputs,
                         out_channels=conv1d_n_outputs,
@@ -332,7 +332,7 @@ class TemporalBlock(nn.Module):
                     )
                 ]
             else:
-                self.conv1 += [
+                conv1 += [
                     TemporalConv1d(
                         in_channels=n_inputs,
                         out_channels=conv1d_n_outputs,
@@ -377,11 +377,13 @@ class TemporalBlock(nn.Module):
         elif use_norm == 'weight_norm':
             self.norm1 = None
             self.norm2 = None
-            self.conv1 = [weight_norm(self.conv1[i]) for i in range(len(dilation))]
+            conv1 = [weight_norm(conv1[i]) for i in range(len(dilation))]
             self.conv2 = weight_norm(self.conv2)
         elif use_norm is None:
             self.norm1 = None
             self.norm2 = None
+
+        self.conv1 = nn.ModuleList(conv1)
 
         if isinstance( self.activation, str ):
             self.activation1 = activation_fn[ self.activation ]()
