@@ -43,6 +43,7 @@ model = TCN(
     output_projection: Optional[ int ] = None,
     output_activation: Optional[ str ] = None,
     force_residual_conv: bool = False,
+    use_separate_skip_connection_output: bool = False,
 )
 # Continue to train/use model for your task
 ```
@@ -72,7 +73,8 @@ The order of output dimensions will be the same as for the input tensors.
 - `lookahead`: If not 0, causal TCNs will use a lookahead on future time frames to increase the modelling accuracy. The lookahead parameter specifies the number of future time steps that will be processed influence the prediction for a specific time step. Default is 0. Will be ignored for non-causal networks which already have the maximum lookahead possible.
 - `output_projection`: If not None, the output of the TCN will be projected to the specified dimension via a 1x1 convolution. This may be useful if the output of the TCN is supposed to be of a different dimension than the input or if the last activation should be linear. If None, no projection will be performed. The default is 'None'.
 - `output_activation`: If not None, the output of the TCN will be passed through the specified activation function. This maybe useful to etablish a classification head via softmax etc. If None, no activation will be performed. The default is 'None'.
-- `force_residual_conv`: If 'True', the optional 1x1 Convolution will always be calculated on the residual of each TCN block, even if the amount of input and output channels of the TCN block are identical.
+- `force_residual_conv`: If 'True', the optional 1x1 Convolution will always be calculated on the residual of each TCN block, even if the amount of input and output channels of the TCN block are identical. The default is 'False'.
+- `use_separate_skip_connection_output`: Determines whether the outputs of the skip connections should be secondary output (if 'True') in addition to the regular output of the TNC or whether the output of the skip connections should be primary output (if 'False'). This flag only has an effect if parameter use_skip_connections is 'True'. The default is 'False'.
 
 ## Streaming Inference
 

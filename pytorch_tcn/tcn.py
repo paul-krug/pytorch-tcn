@@ -563,6 +563,7 @@ class TCN(nn.Module):
             output_projection: Optional[ int ] = None,
             output_activation: Optional[ str ] = None,
             force_residual_conv: bool = False,
+            use_separate_skip_connection_output: bool = False,
             ):
         super(TCN, self).__init__()
 
@@ -597,6 +598,7 @@ class TCN(nn.Module):
         self.activation = activation
         self.kernel_initializer = kernel_initializer
         self.use_skip_connections = use_skip_connections
+        self.use_separate_skip_connection_output = use_separate_skip_connection_output
         self.input_shape = input_shape
         self.embedding_shapes = embedding_shapes
         self.embedding_mode = embedding_mode
@@ -750,8 +752,10 @@ class TCN(nn.Module):
                 if index < len( self.network ) - 1:
                     skip_connections.append( skip_out )
             skip_connections.append( x )
-            x = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
-            x = self.activation_skip_out( x )
+            x_skip = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
+            x_skip = self.activation_skip_out( x_skip )
+            if not self.use_separate_skip_connection_output:
+                x = x_skip
         else:
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
@@ -762,13 +766,25 @@ class TCN(nn.Module):
                     )
         if self.projection_out is not None:
             x = self.projection_out( x )
+            if self.use_skip_connections and self.use_separate_skip_connection_output:
+                x_skip = self.projection_out( x_skip )
         if self.activation_out is not None:
             x = self.activation_out( x )
+            if self.use_skip_connections and self.use_separate_skip_connection_output:
+                x_skip = self.activation_out( x_skip )
         if inference and self.lookahead > 0:
             x = x[ :, :, self.lookahead: ]
+            if self.use_skip_connections and self.use_separate_skip_connection_output:
+                x_skip = x_skip[ :, :, self.lookahead: ]
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
-        return x
+            if self.use_skip_connections and self.use_separate_skip_connection_output:
+                x_skip = x_skip.transpose(1, 2)
+
+        if self.use_skip_connections and self.use_separate_skip_connection_output:
+            return x, x_skip
+        else:
+            return x
     
     def inference(
             self,
