@@ -44,6 +44,7 @@ model = TCN(
     output_activation: Optional[ str ] = None,
     force_residual_conv: bool = False,
     use_separate_skip_connection_output: bool = False,
+    skip_connection_operation: str = 'sum'
 )
 # Continue to train/use model for your task
 ```
@@ -75,6 +76,7 @@ The order of output dimensions will be the same as for the input tensors.
 - `output_activation`: If not None, the output of the TCN will be passed through the specified activation function. This maybe useful to etablish a classification head via softmax etc. If None, no activation will be performed. The default is 'None'.
 - `force_residual_conv`: If 'True', the optional 1x1 Convolution will always be calculated on the residual of each TCN block, even if the amount of input and output channels of the TCN block are identical. The default is 'False'.
 - `use_separate_skip_connection_output`: Determines whether the outputs of the skip connections should be secondary output (if 'True') in addition to the regular output of the TNC or whether the output of the skip connections should be primary output (if 'False'). This flag only has an effect if parameter use_skip_connections is 'True'. The default is 'False'.
+- `skip_connection_operation`: The operation to apply when combining the skip connection outputs. Can be 'sum' or 'concat'. When set to 'sum', the skip outputs of each layer are summed per channel. When set to 'stack', the skip outputs of each layer are concatenated, resulting in an output with an amount of channels equal to the sum of parameter num_channels. The default is 'sum'.
 
 ## Streaming Inference
 

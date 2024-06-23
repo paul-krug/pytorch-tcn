@@ -196,6 +196,21 @@ class TestTCN(unittest.TestCase):
                 expected_error = None,
                 expected_outputs = 1
             ),
+            # Test different values for skip_connection_operation
+            dict(
+                kwargs=dict(
+                    use_skip_connections = [True],
+                    skip_connection_operation = ['sum', 'concat']
+                ),
+                expected_error=None,
+            ),
+            dict(
+                kwargs=dict(
+                    use_skip_connections = [True],
+                    skip_connection_operation = ['foo']
+                ),
+                expected_error = ValueError,
+            ),
         ]
 
         self.combinations = generate_combinations(self.test_args)
@@ -218,9 +233,11 @@ class TestTCN(unittest.TestCase):
             self.num_inputs,
             self.time_steps,
             )
+        is_skip_operation_concat = (kwargs.get('use_skip_connections', False)
+                                    and kwargs.get('skip_connection_operation', 'sum') == 'concat')
         expected_shape = (
             self.batch_size,
-            self.num_channels[-1],
+            sum(self.num_channels) if is_skip_operation_concat else self.num_channels[-1],
             self.time_steps,
             )
         x_inference = torch.randn(
@@ -230,7 +247,7 @@ class TestTCN(unittest.TestCase):
             )
         expected_shape_inference = (
             1,
-            self.num_channels[-1],
+            sum(self.num_channels) if is_skip_operation_concat else self.num_channels[-1],
             self.time_steps - tcn.lookahead,
             )
 

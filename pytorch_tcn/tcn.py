@@ -564,6 +564,7 @@ class TCN(nn.Module):
             output_activation: Optional[ str ] = None,
             force_residual_conv: bool = False,
             use_separate_skip_connection_output: bool = False,
+            skip_connection_operation: str = 'sum'
             ):
         super(TCN, self).__init__()
 
@@ -572,6 +573,7 @@ class TCN(nn.Module):
         
         self.allowed_norm_values = ['batch_norm', 'layer_norm', 'weight_norm', None]
         self.allowed_input_shapes = ['NCL', 'NLC']
+        self.allowed_skip_connection_operations = ['sum', 'concat']
 
         _check_generic_input_arg( causal, 'causal', [True, False] )
         _check_generic_input_arg( use_norm, 'use_norm', self.allowed_norm_values )
@@ -582,6 +584,8 @@ class TCN(nn.Module):
         _check_generic_input_arg( embedding_mode, 'embedding_mode', ['add', 'concat'] )
         _check_generic_input_arg( use_gate, 'use_gate', [True, False] )
         _check_activation_arg(output_activation, 'output_activation')
+        _check_generic_input_arg(skip_connection_operation, 'skip_connection_operation',
+                                 self.allowed_skip_connection_operations)
 
         if dilations is None:
             if dilation_reset is None:
@@ -607,6 +611,7 @@ class TCN(nn.Module):
         self.lookahead = lookahead
         self.output_projection = output_projection
         self.output_activation = output_activation
+        self.skip_connection_operation = skip_connection_operation
 
         if embedding_shapes is not None:
             if isinstance(embedding_shapes, Iterable):
@@ -642,7 +647,7 @@ class TCN(nn.Module):
             self.downsample_skip_connection = nn.ModuleList()
             for i in range( len( num_channels ) ):
                 # Downsample layer output dim to network output dim if needed
-                if num_channels[i] != num_channels[-1]:
+                if skip_connection_operation == 'sum' and num_channels[i] != num_channels[-1]:
                     self.downsample_skip_connection.append(
                         nn.Conv1d( num_channels[i], num_channels[-1], 1 )
                         )
@@ -752,7 +757,14 @@ class TCN(nn.Module):
                 if index < len( self.network ) - 1:
                     skip_connections.append( skip_out )
             skip_connections.append( x )
-            x_skip = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
+            if self.skip_connection_operation == 'sum':
+                x_skip = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
+            elif self.skip_connection_operation == 'concat':
+                x_skip = torch.cat( skip_connections, dim=1 )
+            else:
+                raise NotImplementedError(
+                    f"skip_connection_operation '{self.skip_connection_operation}' is not implemented!"
+                )
             x_skip = self.activation_skip_out( x_skip )
             if not self.use_separate_skip_connection_output:
                 x = x_skip
