@@ -23,6 +23,7 @@ def generate_combinations(test_args):
                 dict(
                     kwargs = combination_dict,
                     expected_error = x['expected_error'],
+                    expected_outputs = x.get('expected_outputs')
                     )
                 )
 
@@ -71,6 +72,9 @@ class TestTCN(unittest.TestCase):
                 kwargs = dict(
                     dilations = [
                         [1, 2, 3, 4, 1, 2, 3, 4],
+                        [[1, 2], [2, 4], [3, 6], [4, 8], [1, 2], [2, 4], [3, 6], [4, 8]],
+                        [[1, 2], [2, 4], [3, 6], [4, 8], 1, 2, 3, 4],
+                        [1, 2, 3, 4, [1, 2], [2, 4], [3, 6], [4, 8]],
                         None,
                     ],
                 ),
@@ -162,13 +166,58 @@ class TestTCN(unittest.TestCase):
                 ),
                 expected_error = ValueError,
             ),
+            # Test different values for force_residual_conv
+            dict(
+                kwargs = dict( force_residual_conv = [True, False] ),
+                expected_error = None,
+            ),
+            # Test different values for use_separate_skip_connection_output
+            dict(
+                kwargs = dict(
+                    use_skip_connections = [True],
+                    use_separate_skip_connection_output = [True]
+                ),
+                expected_error = None,
+                expected_outputs = 2
+            ),
+            dict(
+                kwargs=dict(
+                    use_skip_connections = [True, False],
+                    use_separate_skip_connection_output = [False]
+                ),
+                expected_error = None,
+                expected_outputs = 1
+            ),
+            dict(
+                kwargs=dict(
+                    use_skip_connections = [False],
+                    use_separate_skip_connection_output = [True]
+                ),
+                expected_error = None,
+                expected_outputs = 1
+            ),
+            # Test different values for skip_connection_operation
+            dict(
+                kwargs=dict(
+                    use_skip_connections = [True],
+                    skip_connection_operation = ['sum', 'concat']
+                ),
+                expected_error=None,
+            ),
+            dict(
+                kwargs=dict(
+                    use_skip_connections = [True],
+                    skip_connection_operation = ['foo']
+                ),
+                expected_error = ValueError,
+            ),
         ]
 
         self.combinations = generate_combinations(self.test_args)
 
         return
 
-    def test_tcn(self, **kwargs):
+    def test_tcn(self, expected_outputs=None, **kwargs):
 
         tcn = TCN(
             num_inputs = self.num_inputs,
@@ -184,9 +233,11 @@ class TestTCN(unittest.TestCase):
             self.num_inputs,
             self.time_steps,
             )
+        is_skip_operation_concat = (kwargs.get('use_skip_connections', False)
+                                    and kwargs.get('skip_connection_operation', 'sum') == 'concat')
         expected_shape = (
             self.batch_size,
-            self.num_channels[-1],
+            sum(self.num_channels) if is_skip_operation_concat else self.num_channels[-1],
             self.time_steps,
             )
         x_inference = torch.randn(
@@ -196,7 +247,7 @@ class TestTCN(unittest.TestCase):
             )
         expected_shape_inference = (
             1,
-            self.num_channels[-1],
+            sum(self.num_channels) if is_skip_operation_concat else self.num_channels[-1],
             self.time_steps - tcn.lookahead,
             )
 
@@ -250,8 +301,11 @@ class TestTCN(unittest.TestCase):
             embeddings_inference = None
 
         y = tcn(x, embeddings = embeddings)
-        
-        self.assertEqual( y.shape, expected_shape )
+        if expected_outputs is None or expected_outputs == 1:
+            self.assertEqual( y.shape, expected_shape )
+        else:
+            for i in range(expected_outputs):
+                self.assertEqual( y[i].shape, expected_shape )
 
         # Testing the streaming inference mode for causal models
         if tcn.causal:
@@ -269,8 +323,12 @@ class TestTCN(unittest.TestCase):
                     )
                 #print( 'y_inference shape: ', y_inference.shape)
                 #stop
-                
-            self.assertEqual( y_inference.shape, expected_shape_inference )
+
+            if expected_outputs is None or expected_outputs == 1:
+                self.assertEqual(y_inference.shape, expected_shape_inference)
+            else:
+                for i in range(expected_outputs):
+                    self.assertEqual(y_inference[i].shape, expected_shape_inference)
 
             # piecewise inference:
             tcn.reset_buffers()
@@ -314,8 +372,13 @@ class TestTCN(unittest.TestCase):
                             embeddings = embeddings_frame,
                             )
                     )
-            y_inference_frames = torch.cat( y_inference_frames, dim = time_dimension )
-            self.assertEqual( y_inference_frames.shape, expected_shape_inference )
+            if expected_outputs is None or expected_outputs == 1:
+                y_inference_frames = torch.cat(y_inference_frames, dim=time_dimension)
+                self.assertEqual(y_inference_frames.shape, expected_shape_inference)
+            else:
+                for i in range(expected_outputs):
+                    y_inference_concatenated = torch.cat([frame[i] for frame in y_inference_frames], dim=time_dimension)
+                    self.assertEqual(y_inference_concatenated.shape, expected_shape_inference)
             #stop
 
             ## piecewise inference without buffer
@@ -353,10 +416,10 @@ class TestTCN(unittest.TestCase):
             kwargs = test_dict['kwargs']
             print( 'Testing kwargs: ', kwargs )
             if test_dict['expected_error'] is None:
-                self.test_tcn( **kwargs )
+                self.test_tcn(test_dict.get('expected_outputs'), **kwargs )
             else:
                 with self.assertRaises(test_dict['expected_error']):
-                    self.test_tcn( **kwargs )
+                    self.test_tcn(test_dict.get('expected_outputs'), **kwargs )
 
         return
     

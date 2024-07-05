@@ -295,83 +295,95 @@ class TemporalBlock(nn.Module):
             causal,
             use_norm,
             activation,
-            kerner_initializer,
+            kernel_initializer,
             embedding_shapes,
             embedding_mode,
             use_gate,
             lookahead,
+            force_residual_conv,
             ):
         super(TemporalBlock, self).__init__()
         self.use_norm = use_norm
         self.activation = activation
-        self.kernel_initializer = kerner_initializer
+        self.kernel_initializer = kernel_initializer
         self.embedding_shapes = embedding_shapes
         self.embedding_mode = embedding_mode
         self.use_gate = use_gate
         self.causal = causal
         self.lookahead = lookahead
 
-        if self.use_gate:
-            conv1d_n_outputs = 2 * n_outputs
-        else:
-            conv1d_n_outputs = n_outputs
+        if isinstance(dilation, int):
+            dilation = [dilation]
 
-        if self.causal:
-            self.conv1 = CausalConv1d(
-                in_channels=n_inputs,
-                out_channels=conv1d_n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                lookahead=self.lookahead,
-                )
+        n_multiplier_gate = 2 if self.use_gate else 1
+        conv1d_n_outputs = n_multiplier_gate * n_outputs
 
-            self.conv2 = CausalConv1d(
-                in_channels=n_outputs,
-                out_channels=n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                lookahead=self.lookahead,
-                )
-
-        else:
-            self.conv1 = TemporalConv1d(
-                in_channels=n_inputs,
-                out_channels=conv1d_n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                )
-
-            self.conv2 = TemporalConv1d(
-                in_channels=n_outputs,
-                out_channels=n_outputs,
-                kernel_size=kernel_size,
-                stride=stride,
-                dilation=dilation,
-                )
-        
-        if use_norm == 'batch_norm':
-            if self.use_gate:
-                self.norm1 = nn.BatchNorm1d(2 * n_outputs)
+        conv1 = []
+        for i in range(len(dilation)):
+            if self.causal:
+                conv1 += [
+                    CausalConv1d(
+                        in_channels=n_inputs,
+                        out_channels=conv1d_n_outputs,
+                        kernel_size=kernel_size,
+                        stride=stride,
+                        dilation=dilation[i],
+                        lookahead=self.lookahead,
+                    )
+                ]
             else:
-                self.norm1 = nn.BatchNorm1d(n_outputs)
+                conv1 += [
+                    TemporalConv1d(
+                        in_channels=n_inputs,
+                        out_channels=conv1d_n_outputs,
+                        kernel_size=kernel_size,
+                        stride=stride,
+                        dilation=dilation[i],
+                    )
+                ]
+
+        if len(dilation) == 1:
+            if self.causal:
+                self.conv2 = CausalConv1d(
+                    in_channels=n_outputs,
+                    out_channels=n_outputs,
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    dilation=dilation[0],
+                    lookahead=self.lookahead,
+                    )
+            else:
+                self.conv2 = TemporalConv1d(
+                    in_channels=n_outputs,
+                    out_channels=n_outputs,
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    dilation=dilation[0],
+                    )
+        else:
+            self.conv2 = nn.Conv1d(
+                in_channels=n_outputs * len(dilation),
+                out_channels=n_outputs,
+                kernel_size=1
+            )
+
+        n_norm1 = n_outputs * n_multiplier_gate * len(dilation)
+        if use_norm == 'batch_norm':
+            self.norm1 = nn.BatchNorm1d(n_norm1)
             self.norm2 = nn.BatchNorm1d(n_outputs)
         elif use_norm == 'layer_norm':
-            if self.use_gate:
-                self.norm1 = nn.LayerNorm(2 * n_outputs)
-            else:
-                self.norm1 = nn.LayerNorm(n_outputs)
+            self.norm1 = nn.LayerNorm(n_norm1)
             self.norm2 = nn.LayerNorm(n_outputs)
         elif use_norm == 'weight_norm':
             self.norm1 = None
             self.norm2 = None
-            self.conv1 = weight_norm(self.conv1)
+            conv1 = [weight_norm(conv1[i]) for i in range(len(dilation))]
             self.conv2 = weight_norm(self.conv2)
         elif use_norm is None:
             self.norm1 = None
             self.norm2 = None
+
+        self.conv1 = nn.ModuleList(conv1)
 
         if isinstance( self.activation, str ):
             self.activation1 = activation_fn[ self.activation ]()
@@ -387,14 +399,12 @@ class TemporalBlock(nn.Module):
 
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
-        
-        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1, padding=0) if n_inputs != n_outputs else None
+
+        do_downsample = n_inputs != n_outputs or force_residual_conv
+        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1, padding=0) if do_downsample else None
 
         if self.embedding_shapes is not None:
-            if self.use_gate:
-                embedding_layer_n_outputs = 2 * n_outputs
-            else:
-                embedding_layer_n_outputs = n_outputs
+            embedding_layer_n_outputs = n_outputs * n_multiplier_gate * len(dilation)
 
             self.embedding_projection_1 = nn.Conv1d(
                 in_channels = sum( [ shape[0] for shape in self.embedding_shapes ] ),
@@ -416,10 +426,11 @@ class TemporalBlock(nn.Module):
             name=self.kernel_initializer,
             activation=self.activation,
             )
-        initialize(
-            self.conv1.weight,
-            **kwargs
-            )
+        for i in range(len(self.conv1)):
+            initialize(
+                self.conv1[i].weight,
+                **kwargs
+                )
         initialize(
             self.conv2.weight,
             **kwargs
@@ -494,8 +505,9 @@ class TemporalBlock(nn.Module):
             embeddings,
             inference,
             ):
-        out = self.conv1(x, inference=inference)
-        out = self.apply_norm( self.norm1, out )
+        out = [self.conv1[i](x, inference=inference) for i in range(len(self.conv1))]
+        out = torch.cat(out, dim=1)
+        out = self.apply_norm(self.norm1, out)
 
         if embeddings is not None:
             out = self.apply_embeddings( out, embeddings )
@@ -503,7 +515,7 @@ class TemporalBlock(nn.Module):
         out = self.activation1(out)
         out = self.dropout1(out)
 
-        out = self.conv2(out, inference=inference)
+        out = self.conv2(out, inference=inference) if len(self.conv1) == 1 else self.conv2(out)
         out = self.apply_norm( self.norm2, out )
         out = self.activation2(out)
         out = self.dropout2(out)
@@ -550,6 +562,9 @@ class TCN(nn.Module):
             lookahead: int = 0,
             output_projection: Optional[ int ] = None,
             output_activation: Optional[ str ] = None,
+            force_residual_conv: bool = False,
+            use_separate_skip_connection_output: bool = False,
+            skip_connection_operation: str = 'sum'
             ):
         super(TCN, self).__init__()
 
@@ -558,6 +573,7 @@ class TCN(nn.Module):
         
         self.allowed_norm_values = ['batch_norm', 'layer_norm', 'weight_norm', None]
         self.allowed_input_shapes = ['NCL', 'NLC']
+        self.allowed_skip_connection_operations = ['sum', 'concat']
 
         _check_generic_input_arg( causal, 'causal', [True, False] )
         _check_generic_input_arg( use_norm, 'use_norm', self.allowed_norm_values )
@@ -568,6 +584,8 @@ class TCN(nn.Module):
         _check_generic_input_arg( embedding_mode, 'embedding_mode', ['add', 'concat'] )
         _check_generic_input_arg( use_gate, 'use_gate', [True, False] )
         _check_activation_arg(output_activation, 'output_activation')
+        _check_generic_input_arg(skip_connection_operation, 'skip_connection_operation',
+                                 self.allowed_skip_connection_operations)
 
         if dilations is None:
             if dilation_reset is None:
@@ -584,6 +602,7 @@ class TCN(nn.Module):
         self.activation = activation
         self.kernel_initializer = kernel_initializer
         self.use_skip_connections = use_skip_connections
+        self.use_separate_skip_connection_output = use_separate_skip_connection_output
         self.input_shape = input_shape
         self.embedding_shapes = embedding_shapes
         self.embedding_mode = embedding_mode
@@ -592,6 +611,7 @@ class TCN(nn.Module):
         self.lookahead = lookahead
         self.output_projection = output_projection
         self.output_activation = output_activation
+        self.skip_connection_operation = skip_connection_operation
 
         if embedding_shapes is not None:
             if isinstance(embedding_shapes, Iterable):
@@ -627,7 +647,7 @@ class TCN(nn.Module):
             self.downsample_skip_connection = nn.ModuleList()
             for i in range( len( num_channels ) ):
                 # Downsample layer output dim to network output dim if needed
-                if num_channels[i] != num_channels[-1]:
+                if skip_connection_operation == 'sum' and num_channels[i] != num_channels[-1]:
                     self.downsample_skip_connection.append(
                         nn.Conv1d( num_channels[i], num_channels[-1], 1 )
                         )
@@ -661,11 +681,12 @@ class TCN(nn.Module):
                     causal=causal,
                     use_norm=use_norm,
                     activation=activation,
-                    kerner_initializer=self.kernel_initializer,
+                    kernel_initializer=self.kernel_initializer,
                     embedding_shapes=self.embedding_shapes,
                     embedding_mode=self.embedding_mode,
                     use_gate=self.use_gate,
                     lookahead=self.lookahead,
+                    force_residual_conv=force_residual_conv
                     )
                 ]
 
@@ -736,8 +757,17 @@ class TCN(nn.Module):
                 if index < len( self.network ) - 1:
                     skip_connections.append( skip_out )
             skip_connections.append( x )
-            x = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
-            x = self.activation_skip_out( x )
+            if self.skip_connection_operation == 'sum':
+                x_skip = torch.stack( skip_connections, dim=0 ).sum( dim=0 )
+            elif self.skip_connection_operation == 'concat':
+                x_skip = torch.cat( skip_connections, dim=1 )
+            else:
+                raise NotImplementedError(
+                    f"skip_connection_operation '{self.skip_connection_operation}' is not implemented!"
+                )
+            x_skip = self.activation_skip_out( x_skip )
+            if not self.use_separate_skip_connection_output:
+                x = x_skip
         else:
             for layer in self.network:
                 #print( 'TCN, embeddings:', embeddings.shape )
@@ -748,13 +778,25 @@ class TCN(nn.Module):
                     )
         if self.projection_out is not None:
             x = self.projection_out( x )
+            if self.use_skip_connections and self.use_separate_skip_connection_output:
+                x_skip = self.projection_out( x_skip )
         if self.activation_out is not None:
             x = self.activation_out( x )
+            if self.use_skip_connections and self.use_separate_skip_connection_output:
+                x_skip = self.activation_out( x_skip )
         if inference and self.lookahead > 0:
             x = x[ :, :, self.lookahead: ]
+            if self.use_skip_connections and self.use_separate_skip_connection_output:
+                x_skip = x_skip[ :, :, self.lookahead: ]
         if self.input_shape == 'NLC':
             x = x.transpose(1, 2)
-        return x
+            if self.use_skip_connections and self.use_separate_skip_connection_output:
+                x_skip = x_skip.transpose(1, 2)
+
+        if self.use_skip_connections and self.use_separate_skip_connection_output:
+            return x, x_skip
+        else:
+            return x
     
     def inference(
             self,
