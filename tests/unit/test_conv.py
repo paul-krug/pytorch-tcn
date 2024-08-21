@@ -119,7 +119,37 @@ class ConvolutionTest(unittest.TestCase):
 
                 assert(torch.allclose(output_slice, torch.tensor(onnx_outputs[0]), atol=1e-5))
                 assert(torch.allclose(out_buffer, torch.tensor(onnx_outputs[1]), atol=1e-5))
-           
+        
+
+    def test_noncausal_convoluation(self):
+        # Define your input tensor
+        input_tensor = torch.randn(1, 3, 32)  # Example input tensor shape: (batch_size, channels, time_steps)
+
+        # Define your convolutional layer
+        in_channels = 3  # Number of input channels
+        out_channels = 16  # Number of output channels
+        kernel_size = 3  # Size of the convolutional kernel
+        stride = 1  # Stride value for the convolution
+        dilation = 1  # Dilation value for the convolution
+        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, dilation, causal=False)
+
+        # Ensure that the results are the same as using a standard Conv1d layer
+        standard_conv_layer = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, dilation=dilation, padding=(kernel_size-1)//2)
+
+        # Copy the weights and biases from the standard layer to the TCN layer
+        conv_layer.weight = standard_conv_layer.weight
+        conv_layer.bias = standard_conv_layer.bias
+
+        with torch.no_grad():            
+            # Apply the convolutional layer to the input tensor
+            output_tensor = conv_layer(input_tensor)
+
+            reference_output_tensor = standard_conv_layer(input_tensor)
+
+            assert(torch.allclose(output_tensor, reference_output_tensor, atol=1e-5))
+
+
+
           
 
 
