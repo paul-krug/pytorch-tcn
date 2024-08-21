@@ -3,6 +3,8 @@ from setuptools import setup
 install_requires = [
     'torch',
     'numpy',
+    'onnx',
+    'onnxruntime'
     ]
 
 # Get version from the module

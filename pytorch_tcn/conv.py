@@ -84,6 +84,7 @@ class TemporalConv1d(nn.Conv1d):
             return self._forward(x)
     
     def inference(self, x, in_buffer):
+
         if x.shape[0] != 1:
             raise ValueError(
                 f"""
