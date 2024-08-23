@@ -19,7 +19,7 @@ class ConvolutionTest(unittest.TestCase):
         kernel_size = 3  # Size of the convolutional kernel
         stride = 1  # Stride value for the convolution
         dilation = 1  # Dilation value for the convolution
-        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, dilation, causal=True)
+        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, ((kernel_size - 1) * dilation) // 2, dilation, causal=True)
 
         self.assertEqual(conv_layer.buffer.shape, (1, in_channels, kernel_size - 1))  # Example assertion for buffer shape
 
@@ -53,7 +53,7 @@ class ConvolutionTest(unittest.TestCase):
         kernel_size = 3  # Size of the convolutional kernel
         stride = 1  # Stride value for the convolution
         dilation = 1  # Dilation value for the convolution
-        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, dilation, causal=True)
+        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, ((kernel_size - 1) * dilation) // 2, dilation, causal=True)
 
         self.assertEqual(conv_layer.buffer.shape, (1, in_channels, kernel_size - 1))  # Example assertion for buffer shape
 
@@ -87,7 +87,7 @@ class ConvolutionTest(unittest.TestCase):
         kernel_size = 3  # Size of the convolutional kernel
         stride = 1  # Stride value for the convolution
         dilation = 1  # Dilation value for the convolution
-        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, dilation, causal=True)
+        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, ((kernel_size - 1) * dilation) // 2, dilation, causal=True)
 
         class ConvModel(nn.Module):
             def __init__(self, conv_layer):
@@ -158,7 +158,7 @@ class ConvolutionTest(unittest.TestCase):
         out_channels = 16  # Number of output channels
         kernel_size = 8  # Size of the convolutional kernel
         stride = 4  # Stride value for the convolution
-        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, causal=True)
+        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding=(kernel_size-stride)//2, causal=True)
 
         with torch.no_grad():
 
@@ -184,7 +184,7 @@ class ConvolutionTest(unittest.TestCase):
         out_channels = 16
         kernel_size = 8
         stride = 4
-        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, causal=True)
+        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding=(kernel_size-stride)//2, causal=True)
 
         with torch.no_grad():
                 
@@ -213,7 +213,7 @@ class ConvolutionTest(unittest.TestCase):
         out_channels = 16
         kernel_size = 8
         stride = 4
-        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, causal=True)
+        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding=(kernel_size-stride)//2, causal=True)
 
         class ConvModel(nn.Module):
             def __init__(self, conv_layer):
@@ -255,7 +255,7 @@ class ConvolutionTest(unittest.TestCase):
         out_channels = 16
         kernel_size = 4
         stride = 2
-        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, causal=False)
+        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding=(kernel_size-stride)//2, causal=False)
 
         # Ensure that the results are the same as using a standard ConvTranspose1d layer
         standard_conv_layer = nn.ConvTranspose1d(in_channels, out_channels, kernel_size, stride=stride, padding=(kernel_size-stride)//2)

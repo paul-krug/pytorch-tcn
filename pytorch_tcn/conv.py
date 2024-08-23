@@ -11,6 +11,7 @@ class TemporalConv1d(nn.Conv1d):
             out_channels,
             kernel_size,
             stride = 1,
+            padding = 0,
             dilation = 1,
             groups = 1,
             bias = True,
@@ -19,6 +20,7 @@ class TemporalConv1d(nn.Conv1d):
             **kwargs,
             ):
         
+
         self.pad_len = (kernel_size - 1) * dilation
         self.causal = causal
         
@@ -126,7 +128,7 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             in_channels,
             out_channels,
             kernel_size,
-            stride,
+            stride = 1,
             padding = 0,
             groups = 1,
             dilation = 1,
@@ -141,6 +143,13 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             raise ValueError(
                 f"""
                 This implementation only supports kernel_size == 2 * stride with power of 2 strides and stride >= 2.
+                """
+                )
+
+        if padding != (kernel_size-stride)//2:
+            raise ValueError(
+                f"""
+                TemporalConvTranspose1d only supports padding=(kernel_size-stride)//2.
                 """
                 )
 
