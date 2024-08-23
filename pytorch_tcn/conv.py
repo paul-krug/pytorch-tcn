@@ -85,6 +85,13 @@ class TemporalConv1d(nn.Conv1d):
     
     def inference(self, x, in_buffer):
 
+        if not self.causal:
+            raise ValueError(
+                """
+                Streaming inference is only supported for causal convolutions.
+                """
+                )
+
         if x.shape[0] != 1:
             raise ValueError(
                 f"""
@@ -119,37 +126,50 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             in_channels,
             out_channels,
             kernel_size,
-            stride = 1,
-            dilation = 1,
+            stride,
+            padding = 0,
             groups = 1,
+            dilation = 1,
             bias = True,
             buffer = None,
             causal = True,
             **kwargs,
             ):
         
+        # This implementation only supports kernel_size == 2 * stride with power of 2 strides
+        if kernel_size != 2 * stride or not math.log2(stride).is_integer() or stride < 2:
+            raise ValueError(
+                f"""
+                This implementation only supports kernel_size == 2 * stride with power of 2 strides and stride >= 2.
+                """
+                )
+
+        self.causal = causal                      
+        self.upsampling_factor = stride
+        self.buffer_size = (kernel_size // stride) - 1
+
+        if self.causal:
+            self.pad_len = 0
+        else:
+            self.pad_len = (kernel_size-stride)//2
+
         super(TemporalConvTranspose1d, self).__init__(
             in_channels = in_channels,
             out_channels = out_channels,
             kernel_size = kernel_size,
             stride = stride,
-            padding = 0,
+            padding = self.pad_len,
             output_padding = 0,
-            dilation = dilation,
             groups = groups,
             bias = bias,
             **kwargs,
             )
-        
-        self.causal = causal                      
-        self.pad_len = (math.ceil(kernel_size/stride) - 1)
-        self.upsampling_factor = stride
 
         if buffer is None:
             buffer = torch.zeros(
                 1,
                 in_channels,
-                self.pad_len,
+                self.buffer_size,
                 )
         self.register_buffer(
             'buffer',
@@ -157,16 +177,23 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             )
         
         return
-    
-    def _causal_forward(self, x):
-        p = nn.ReplicationPad1d(
-            (self.pad_len, 0),
-            )
-        x = p(x)
+
+    def _forward(self, x):
+        if self.causal:
+            p = nn.ConstantPad1d(
+                (self.buffer_size, 0),
+                0.0,
+                )
+            x = p(x)
+
         x = super().forward(x)
-        x = x[:, :, self.upsampling_factor : -self.upsampling_factor]
+
+        if self.causal:
+            x = x[:, :, self.upsampling_factor : -self.upsampling_factor]
+
         return x
-    
+
+
     def forward(
             self,
             x,
@@ -180,24 +207,29 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             else:
                 return self.inference(x, in_buffer)
         else:
-            return self._forward(x)
-    
-    def _forward(
-            self,
-            x,
-            ):
-        if self.causal:
-            x = self._causal_forward(x)
-        else:
-            x = super().forward(x)
-        return x
+            return self._forward(x)    
     
     def inference(self, x, in_buffer):
+        if not self.causal:
+            raise ValueError(
+                """
+                Streaming inference is only supported for causal convolutions.
+                """
+                )
+        
+        if x.shape[0] != 1:
+            raise ValueError(
+                f"""
+                Streaming inference of CausalConv1D layer only supports
+                a batch size of 1, but batch size is {x.shape[0]}.
+                """
+                )        
+
         x = torch.cat(
             (in_buffer, x),
             -1,
             )
-        out_buffer = x[:, :, -self.pad_len:]
+        out_buffer = x[:, :, -self.buffer_size:]
         x = super().forward(x)
         x = x[:, :, self.upsampling_factor : -self.upsampling_factor]
         return x, out_buffer
