@@ -5,8 +5,6 @@ import torch.nn as nn
 from pytorch_tcn.conv import TemporalConv1d, TemporalConvTranspose1d
 import tempfile
 import os
-import onnx
-import onnxruntime as ort
 
 class ConvolutionTest(unittest.TestCase):
     def test_causal_internal_buffer_convolution(self):
@@ -78,6 +76,8 @@ class ConvolutionTest(unittest.TestCase):
                 in_buffer = out_buffer
 
     def test_causal_onnx_convolution(self):
+        import onnxruntime as ort
+
         # Define your input tensor
         input_tensor = torch.randn(1, 3, 32)  # Example input tensor shape: (batch_size, channels, time_steps)
 
@@ -205,6 +205,8 @@ class ConvolutionTest(unittest.TestCase):
                     in_buffer = out_buffer
           
     def test_transpose_causal_onnx_convolution(self):
+        import onnxruntime as ort
+
         # Define your input tensor
         input_tensor = torch.randn(1, 3, 32)
 
