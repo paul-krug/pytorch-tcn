@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import math
 
+# Padding modes
+PADDING_MODES = ['constant', 'reflect', 'replicate']
 
 class TemporalConv1d(nn.Conv1d):
     def __init__(
@@ -18,20 +20,9 @@ class TemporalConv1d(nn.Conv1d):
             buffer = None,
             causal = True,
             lookahead = 0,
+            padding_mode = 'constant',
             **kwargs,
             ):
-
-        # Lookahead is only kept for legacy reasons, ensure it is zero
-        if lookahead != 0:
-            raise ValueError(
-                """
-                The lookahead parameter is deprecated and must be set to 0.
-                """
-                )
-
-        self.pad_len = (kernel_size - 1) * dilation
-        self.causal = causal
-        
         super(TemporalConv1d, self).__init__(
             in_channels = in_channels,
             out_channels = out_channels,
@@ -43,6 +34,26 @@ class TemporalConv1d(nn.Conv1d):
             bias = bias,
             **kwargs,
             )
+
+        # Lookahead is only kept for legacy reasons, ensure it is zero
+        if lookahead != 0:
+            raise ValueError(
+                """
+                The lookahead parameter is deprecated and must be set to 0.
+                """
+                )
+        
+        # Check padding mode
+        if padding_mode not in PADDING_MODES:
+            raise ValueError(
+                f"""
+                padding_mode must be one of {PADDING_MODES}, but got {padding_mode}.
+                """
+                )
+
+        self.pad_len = (kernel_size - 1) * dilation
+        self.causal = causal
+        
         
         if causal:
             # Padding is only on the left side
@@ -53,6 +64,20 @@ class TemporalConv1d(nn.Conv1d):
             self.left_pad = self.pad_len // 2
             self.right_pad = self.pad_len - self.left_pad
         
+        if padding_mode == 'constant':
+            self.padder = nn.ConstantPad1d(
+                ( self.left_pad, self.right_pad ),
+                0.0,
+                )
+        elif padding_mode == 'reflect':
+            self.padder = nn.ReflectionPad1d(
+                ( self.left_pad, self.right_pad ),
+                )
+        elif padding_mode == 'replicate':
+            self.padder = nn.ReplicationPad1d(
+                ( self.left_pad, self.right_pad ),
+                )
+
         # Buffer is used for streaming inference
         if buffer is None:
             buffer = torch.zeros(
@@ -70,11 +95,7 @@ class TemporalConv1d(nn.Conv1d):
         return
     
     def _forward(self, x):
-        p = nn.ConstantPad1d(
-            ( self.left_pad, self.right_pad ),
-            0.0,
-            )
-        x = p(x)
+        x = self.padder(x)
         x = super().forward(x)
         return x
 
@@ -144,6 +165,7 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             buffer = None,
             causal = True,
             lookahead = 0,
+            padding_mode = 'constant',
             **kwargs,
             ):
 
@@ -152,6 +174,14 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             raise ValueError(
                 """
                 The lookahead parameter is deprecated and must be set to 0.
+                """
+                )
+        
+        # Check padding mode
+        if padding_mode not in PADDING_MODES:
+            raise ValueError(
+                f"""
+                padding_mode must be one of {PADDING_MODES}, but got {padding_mode}.
                 """
                 )
 
@@ -175,16 +205,20 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
         self.buffer_size = (kernel_size // stride) - 1
 
         if self.causal:
-            self.pad_len = 0
+            self.pad_left = self.buffer_size
+            self.pad_right = 0
+            self.implicit_padding = 0
         else:
-            self.pad_len = (kernel_size-stride)//2
+            self.pad_left = 0
+            self.pad_right = 0
+            self.implicit_padding = (kernel_size-stride)//2
 
         super(TemporalConvTranspose1d, self).__init__(
             in_channels = in_channels,
             out_channels = out_channels,
             kernel_size = kernel_size,
             stride = stride,
-            padding = self.pad_len,
+            padding = self.implicit_padding,
             output_padding = 0,
             groups = groups,
             bias = bias,
@@ -201,17 +235,25 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             'buffer',
             buffer,
             )
-        
+
+        if padding_mode == 'constant':
+            self.padder = nn.ConstantPad1d(
+                    (self.pad_left, self.pad_right),
+                    0.0,
+                    )
+        elif padding_mode == 'reflect':
+            self.padder = nn.ReflectionPad1d(
+                    (self.pad_left, self.pad_right),
+                    )
+        elif padding_mode == 'replicate':
+            self.padder = nn.ReplicationPad1d(
+                    (self.pad_left, self.pad_right),
+                    )
+
         return
 
     def _forward(self, x):
-        if self.causal:
-            p = nn.ConstantPad1d(
-                (self.buffer_size, 0),
-                0.0,
-                )
-            x = p(x)
-
+        x = self.padder(x)
         x = super().forward(x)
 
         if self.causal:
