@@ -34,7 +34,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: python -m pip install .
+        run: python -m pip install . 
+        
+      - name: Install ONNX for tests 
+        run: python -m pip install onnx onnxruntime
 
       - name: Run tests
         run: python -m unittest discover
