@@ -140,17 +140,11 @@ class BaseTCN(nn.Module):
     
     def inference(
             self,
-            x,
-            in_buffers=None,
-            embeddings=None,
+            args,
+            **kwargs,
             ):
         
-        return self.forward(
-            x,
-            embeddings=embeddings,
-            inference=True,
-            in_buffers=in_buffers,
-            )
+        return self( *args, inference=True, **kwargs )
     
     def init_weights(self):
         
@@ -420,9 +414,9 @@ class TCN(BaseTCN):
             embedding_shapes: Optional[ ArrayLike ] = None,
             embedding_mode: str = 'add',
             use_gate: bool = False,
+            lookahead=0,
             output_projection: Optional[ int ] = None,
             output_activation: Optional[ str ] = None,
-            lookahead=0,
             ):
         super(TCN, self).__init__()
 
