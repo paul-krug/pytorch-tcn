@@ -17,9 +17,17 @@ class TemporalConv1d(nn.Conv1d):
             bias = True,
             buffer = None,
             causal = True,
+            lookahead = 0,
             **kwargs,
             ):
-        
+
+        # Lookahead is only kept for legacy reasons, ensure it is zero
+        if lookahead != 0:
+            raise ValueError(
+                """
+                The lookahead parameter is deprecated and must be set to 0.
+                """
+                )
 
         self.pad_len = (kernel_size - 1) * dilation
         self.causal = causal
@@ -135,9 +143,18 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             bias = True,
             buffer = None,
             causal = True,
+            lookahead = 0,
             **kwargs,
             ):
-        
+
+        # Lookahead is only kept for legacy reasons, ensure it is zero
+        if lookahead != 0:
+            raise ValueError(
+                """
+                The lookahead parameter is deprecated and must be set to 0.
+                """
+                )
+
         # This implementation only supports kernel_size == 2 * stride with power of 2 strides
         if kernel_size != 2 * stride or not math.log2(stride).is_integer() or stride < 2:
             raise ValueError(

@@ -422,6 +422,7 @@ class TCN(BaseTCN):
             use_gate: bool = False,
             output_projection: Optional[ int ] = None,
             output_activation: Optional[ str ] = None,
+            lookahead=0,
             ):
         super(TCN, self).__init__()
 
