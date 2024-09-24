@@ -1,0 +1,307 @@
+import warnings
+import torch
+import torch.nn as nn
+import math
+
+# Padding modes
+PADDING_MODES = ['constant', 'reflect', 'replicate']
+
+class TemporalConv1d(nn.Conv1d):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride = 1,
+            padding = 0,
+            dilation = 1,
+            groups = 1,
+            bias = True,
+            buffer = None,
+            causal = True,
+            lookahead = 0,
+            padding_mode = 'constant',
+            **kwargs,
+            ):
+        super(TemporalConv1d, self).__init__(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            padding = 0,
+            dilation = dilation,
+            groups = groups,
+            bias = bias,
+            **kwargs,
+            )
+
+        # Lookahead is only kept for legacy reasons, ensure it is zero
+        if lookahead != 0:
+            raise ValueError(
+                """
+                The lookahead parameter is deprecated and must be set to 0.
+                """
+                )
+        
+        # Check padding mode
+        if padding_mode not in PADDING_MODES:
+            raise ValueError(
+                f"""
+                padding_mode must be one of {PADDING_MODES}, but got {padding_mode}.
+                """
+                )
+
+        self.pad_len = (kernel_size - 1) * dilation
+        self.causal = causal
+        
+        
+        if causal:
+            # Padding is only on the left side
+            self.left_pad = self.pad_len
+            self.right_pad = 0
+        else:
+            # Padding is on both sides
+            self.left_pad = self.pad_len // 2
+            self.right_pad = self.pad_len - self.left_pad
+        
+        if padding_mode == 'constant':
+            self.padder = nn.ConstantPad1d(
+                ( self.left_pad, self.right_pad ),
+                0.0,
+                )
+        elif padding_mode == 'reflect':
+            self.padder = nn.ReflectionPad1d(
+                ( self.left_pad, self.right_pad ),
+                )
+        elif padding_mode == 'replicate':
+            self.padder = nn.ReplicationPad1d(
+                ( self.left_pad, self.right_pad ),
+                )
+
+        # Buffer is used for streaming inference
+        if buffer is None:
+            buffer = torch.zeros(
+                1,
+                in_channels,
+                self.pad_len,
+                )
+        
+        # Register buffer as a persistent buffer which is available as self.buffer
+        self.register_buffer(
+            'buffer',
+            buffer,
+            )
+        
+        return
+    
+    def _forward(self, x):
+        x = self.padder(x)
+        x = super().forward(x)
+        return x
+
+    def forward(
+            self,
+            x,
+            inference=False,
+            in_buffer=None,
+            ):
+        if inference:
+            if in_buffer is None:
+                x, self.buffer = self.inference(x, self.buffer)
+                return x
+            else:
+                return self.inference(x, in_buffer)
+        else:
+            return self._forward(x)
+    
+    def inference(self, x, in_buffer):
+
+        if not self.causal:
+            raise ValueError(
+                """
+                Streaming inference is only supported for causal convolutions.
+                """
+                )
+
+        if x.shape[0] != 1:
+            raise ValueError(
+                f"""
+                Streaming inference of CausalConv1D layer only supports
+                a batch size of 1, but batch size is {x.shape[0]}.
+                """
+                )
+
+        x = torch.cat(
+            (in_buffer, x),
+            -1,
+            )
+
+        out_buffer = x[:, :, -self.pad_len: ]
+        x = super().forward(x)
+        return x, out_buffer
+    
+    def reset_buffer(self):
+        self.buffer.zero_()
+        if self.buffer.shape[2] != self.pad_len:
+            raise ValueError(
+                f"""
+                Buffer shape {self.buffer.shape} does not match the expected
+                shape (1, {self.in_channels}, {self.pad_len}).
+                """
+                )
+
+
+class TemporalConvTranspose1d(nn.ConvTranspose1d):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride = 1,
+            padding = 0,
+            groups = 1,
+            dilation = 1,
+            bias = True,
+            buffer = None,
+            causal = True,
+            lookahead = 0,
+            padding_mode = 'constant',
+            **kwargs,
+            ):
+
+        # Lookahead is only kept for legacy reasons, ensure it is zero
+        if lookahead != 0:
+            raise ValueError(
+                """
+                The lookahead parameter is deprecated and must be set to 0.
+                """
+                )
+        
+        # Check padding mode
+        if padding_mode not in PADDING_MODES:
+            raise ValueError(
+                f"""
+                padding_mode must be one of {PADDING_MODES}, but got {padding_mode}.
+                """
+                )
+
+        # This implementation only supports kernel_size == 2 * stride with power of 2 strides
+        if kernel_size != 2 * stride or not math.log2(stride).is_integer() or stride < 2:
+            raise ValueError(
+                f"""
+                This implementation only supports kernel_size == 2 * stride with power of 2 strides and stride >= 2.
+                """
+                )
+
+        if padding != (kernel_size-stride)//2:
+            raise ValueError(
+                f"""
+                TemporalConvTranspose1d only supports padding=(kernel_size-stride)//2.
+                """
+                )
+
+        self.causal = causal                      
+        self.upsampling_factor = stride
+        self.buffer_size = (kernel_size // stride) - 1
+
+        if self.causal:
+            self.pad_left = self.buffer_size
+            self.pad_right = 0
+            self.implicit_padding = 0
+        else:
+            self.pad_left = 0
+            self.pad_right = 0
+            self.implicit_padding = (kernel_size-stride)//2
+
+        super(TemporalConvTranspose1d, self).__init__(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            padding = self.implicit_padding,
+            output_padding = 0,
+            groups = groups,
+            bias = bias,
+            **kwargs,
+            )
+
+        if buffer is None:
+            buffer = torch.zeros(
+                1,
+                in_channels,
+                self.buffer_size,
+                )
+        self.register_buffer(
+            'buffer',
+            buffer,
+            )
+
+        if padding_mode == 'constant':
+            self.padder = nn.ConstantPad1d(
+                    (self.pad_left, self.pad_right),
+                    0.0,
+                    )
+        elif padding_mode == 'reflect':
+            self.padder = nn.ReflectionPad1d(
+                    (self.pad_left, self.pad_right),
+                    )
+        elif padding_mode == 'replicate':
+            self.padder = nn.ReplicationPad1d(
+                    (self.pad_left, self.pad_right),
+                    )
+
+        return
+
+    def _forward(self, x):
+        x = self.padder(x)
+        x = super().forward(x)
+
+        if self.causal:
+            x = x[:, :, self.upsampling_factor : -self.upsampling_factor]
+
+        return x
+
+
+    def forward(
+            self,
+            x,
+            inference=False,
+            in_buffer=None,
+            ):
+        if inference:
+            if in_buffer is None:
+                x, self.buffer = self.inference(x, self.buffer)
+                return x
+            else:
+                return self.inference(x, in_buffer)
+        else:
+            return self._forward(x)    
+    
+    def inference(self, x, in_buffer):
+        if not self.causal:
+            raise ValueError(
+                """
+                Streaming inference is only supported for causal convolutions.
+                """
+                )
+        
+        if x.shape[0] != 1:
+            raise ValueError(
+                f"""
+                Streaming inference of CausalConv1D layer only supports
+                a batch size of 1, but batch size is {x.shape[0]}.
+                """
+                )        
+
+        x = torch.cat(
+            (in_buffer, x),
+            -1,
+            )
+        out_buffer = x[:, :, -self.buffer_size:]
+        x = super().forward(x)
+        x = x[:, :, self.upsampling_factor : -self.upsampling_factor]
+        return x, out_buffer
+    
+    def reset_buffer(self):
+        self.buffer.zero_()
+

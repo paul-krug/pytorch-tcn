@@ -55,7 +55,6 @@ class TestTCN(unittest.TestCase):
                 kwargs = dict(
                     kernel_size = [3],
                     causal = [True, False],
-                    lookahead = [ 1, 4 ],
                     output_projection = [None, 128],
                     output_activation = [None, 'relu'],
                     ),
@@ -93,7 +92,6 @@ class TestTCN(unittest.TestCase):
             dict(
                 kwargs = dict(
                     causal = [True, False],
-                    lookahead = [ 0, 1, 4 ],
                     ),
                 expected_error = None,
             ),
@@ -162,6 +160,20 @@ class TestTCN(unittest.TestCase):
                 ),
                 expected_error = ValueError,
             ),
+            # Test lookahead
+            dict(
+                kwargs= dict(
+                    lookahead = [0],
+                ),
+                expected_error = None,
+            ),
+            # Test invalid lookahead
+            dict(
+                kwargs= dict(
+                    lookahead = [1],
+                ),
+                expected_error = ValueError,
+            ),
         ]
 
         self.combinations = generate_combinations(self.test_args)
@@ -197,7 +209,7 @@ class TestTCN(unittest.TestCase):
         expected_shape_inference = (
             1,
             self.num_channels[-1],
-            self.time_steps - tcn.lookahead,
+            self.time_steps,
             )
 
         time_dimension = -1
@@ -213,7 +225,7 @@ class TestTCN(unittest.TestCase):
             x_inference = x_inference.permute(0, 2, 1)
             expected_shape_inference = (
                 1,
-                self.time_steps - tcn.lookahead,
+                self.time_steps,
                 self.num_channels[-1],
                 )
 
@@ -225,7 +237,7 @@ class TestTCN(unittest.TestCase):
                 if None in shape:
                     # replace None with self.time_steps
                     shape = list(shape)
-                    shape[ shape.index(None) ] = self.time_steps# - tcn.lookahead
+                    shape[ shape.index(None) ] = self.time_steps
                     shape = tuple(shape)
 
                     #shape_inference = list(shape_inference)
@@ -277,8 +289,8 @@ class TestTCN(unittest.TestCase):
             #print( 'tcn first conv layer buffer shape, CAUSAL Inf 2: ', first_layer[0].conv1.buffer.shape)
             y_inference_frames = []
             #index:index+hop_length
-            block_size = 1 + tcn.lookahead
-            for i in range( 0, self.time_steps-tcn.lookahead ):
+            block_size = 1
+            for i in range( 0, self.time_steps ):
                 # pick frame from time dimension
                 frame = x_inference.narrow(
                     dim = time_dimension,

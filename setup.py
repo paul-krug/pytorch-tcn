@@ -2,7 +2,7 @@ from setuptools import setup
 
 install_requires = [
     'torch',
-    'numpy',
+    'numpy'
     ]
 
 # Get version from the module
