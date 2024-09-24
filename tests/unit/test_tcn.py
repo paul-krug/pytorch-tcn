@@ -160,6 +160,20 @@ class TestTCN(unittest.TestCase):
                 ),
                 expected_error = ValueError,
             ),
+            # Test lookahead
+            dict(
+                kwargs= dict(
+                    lookahead = [0],
+                ),
+                expected_error = None,
+            ),
+            # Test invalid lookahead
+            dict(
+                kwargs= dict(
+                    lookahead = [1],
+                ),
+                expected_error = ValueError,
+            ),
         ]
 
         self.combinations = generate_combinations(self.test_args)

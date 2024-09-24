@@ -140,7 +140,7 @@ class BaseTCN(nn.Module):
     
     def inference(
             self,
-            args,
+            *args,
             **kwargs,
             ):
         
@@ -419,6 +419,15 @@ class TCN(BaseTCN):
             output_activation: Optional[ str ] = None,
             ):
         super(TCN, self).__init__()
+
+        if lookahead > 0:
+            # Only lookahead of 0 is supported, parameter is kept for compatibility
+            raise ValueError(
+                """
+                The lookahead != 0 is not supported in this version of the TCN.
+                """
+                )
+
 
         if dilations is not None and len(dilations) != len(num_channels):
             raise ValueError("Length of dilations must match length of num_channels")
