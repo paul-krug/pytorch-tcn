@@ -1,10 +1,16 @@
+import os
 import warnings
 import torch
 import torch.nn as nn
 import math
 
 # Padding modes
-PADDING_MODES = ['constant', 'reflect', 'replicate']
+PADDING_MODES = [
+    'zeros',
+    'reflect',
+    'replicate',
+    'circular',
+]
 
 class TemporalConv1d(nn.Conv1d):
     def __init__(
@@ -17,23 +23,49 @@ class TemporalConv1d(nn.Conv1d):
             dilation = 1,
             groups = 1,
             bias = True,
+            padding_mode='zeros',
+            device=None,
+            dtype=None,
             buffer = None,
             causal = True,
             lookahead = 0,
-            padding_mode = 'constant',
-            **kwargs,
             ):
         super(TemporalConv1d, self).__init__(
             in_channels = in_channels,
             out_channels = out_channels,
             kernel_size = kernel_size,
             stride = stride,
-            padding = 0,
+            padding = 0, # Padding is reimplemented in this class
             dilation = dilation,
             groups = groups,
             bias = bias,
-            **kwargs,
+            padding_mode='zeros', # Padding is reimplemented in this class
+            device=device,
+            dtype=dtype,
             )
+        
+        # Padding is computed internally
+        if padding != 0:
+            if os.environ.get( 'PYTORCH_TCN_ALLOW_DROP_IN', 'Not set' ) == '0':
+                warnings.warn(
+                    """
+                    The value of arg 'padding' must be 0 for TemporalConv1d, because the correct amount
+                    of padding is calculated automatically based on the kernel size and dilation.
+                    The value of 'padding' will be ignored.
+                    """
+                    )
+            elif os.environ.get( 'PYTORCH_TCN_ALLOW_DROP_IN', 'Not set' ) == '1':
+                pass
+            else:
+                raise ValueError(
+                    """
+                    The value of arg 'padding' must be 0 for TemporalConv1d, because the correct amount
+                    of padding is calculated automatically based on the kernel size and dilation.
+                    If you want to suppress this error in order to use the layer as drop-in replacement
+                    for nn.Conv1d, set the environment variable 'PYTORCH_TCN_ALLOW_DROP_IN' to '0'
+                    (will reduce error to a warning) or '1' (will suppress the error/warning entirely).
+                    """
+                    )
 
         # Lookahead is only kept for legacy reasons, ensure it is zero
         if lookahead != 0:
@@ -43,18 +75,10 @@ class TemporalConv1d(nn.Conv1d):
                 The parameter will be removed in a future version.
                 """
                 )
-        
-        # Check padding mode
-        if padding_mode not in PADDING_MODES:
-            raise ValueError(
-                f"""
-                padding_mode must be one of {PADDING_MODES}, but got {padding_mode}.
-                """
-                )
+
 
         self.pad_len = (kernel_size - 1) * dilation
         self.causal = causal
-        
         
         if causal:
             # Padding is only on the left side
@@ -65,7 +89,7 @@ class TemporalConv1d(nn.Conv1d):
             self.left_pad = self.pad_len // 2
             self.right_pad = self.pad_len - self.left_pad
         
-        if padding_mode == 'constant':
+        if padding_mode == 'zeros':
             self.padder = nn.ConstantPad1d(
                 ( self.left_pad, self.right_pad ),
                 0.0,
@@ -77,6 +101,17 @@ class TemporalConv1d(nn.Conv1d):
         elif padding_mode == 'replicate':
             self.padder = nn.ReplicationPad1d(
                 ( self.left_pad, self.right_pad ),
+                )
+        elif padding_mode == 'circular':
+            self.padder = nn.CircularPad1d(
+                ( self.left_pad, self.right_pad ),
+                )
+        else:
+            raise ValueError(
+                f"""
+                padding_mode must be one of {PADDING_MODES},
+                but got {padding_mode}.
+                """
                 )
 
         # Buffer is used for streaming inference
