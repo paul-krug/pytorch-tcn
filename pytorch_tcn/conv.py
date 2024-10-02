@@ -40,6 +40,7 @@ class TemporalConv1d(nn.Conv1d):
             raise ValueError(
                 """
                 The lookahead parameter is deprecated and must be set to 0.
+                The parameter will be removed in a future version.
                 """
                 )
         
@@ -174,6 +175,7 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             raise ValueError(
                 """
                 The lookahead parameter is deprecated and must be set to 0.
+                The parameter will be removed in a future version.
                 """
                 )
         

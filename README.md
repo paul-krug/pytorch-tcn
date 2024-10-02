@@ -3,9 +3,19 @@
 <b>Streamable (Real-Time) Temporal Convolutional Networks in PyTorch</b>
 </p>
 
-This python package provides a flexible and comprehensive implementation of temporal convolutional neural networks (TCN) in PyTorch analogous to the popular tensorflow/keras package [keras-tcn](https://github.com/philipperemy/keras-tcn). Like keras-tcn, the implementation of pytorch-tcn is based on the TCN architecture presented by [Bai et al.](https://arxiv.org/abs/1803.01271), while also including some features of the original [WaveNet](https://arxiv.org/pdf/1609.03499.pdf) architecture (e.g. skip connections) and the option for automatic reset of dilation sizes to allow training of very deep TCN structures.
+This python package provides
 
-<b>Additionally</b>, this package offers a streaming inference option for causal networks (with and without lookahead). This allows to process data in small blocks instead of the whole sequence, which is essential for real-time applications. See section [Streaming Inference](#streaming-inference) for more details.
+- a temporal convolutional neural network (TCN) class similar to keras-tcn, see [TCN Class](#the-tcn-class)
+
+- implementations of Conv1d and ConvTranspose1d layers with a causal/no-causal switch, see [Causal Convolution](#causal-convolution)
+
+- a streaming inference option for real-time applications, see [Streaming Inference](#streaming-inference)
+
+- compatibility with the Open Neural Network Exchange (ONNX) format, to use trained TCN models in non-Python environments such as C++. See [ONNX Support](#onnx-support)
+
+
+<br>
+<br>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/paul-krug/pytorch-tcn/main/misc/tcn_images.jpg">
@@ -18,7 +28,11 @@ This python package provides a flexible and comprehensive implementation of temp
 pip install pytorch-tcn
 ```
 
-## How to use the TCN class
+## The TCN class
+
+The TCN class provides a flexible and comprehensive implementation of temporal convolutional neural networks (TCN) in PyTorch analogous to the popular tensorflow/keras package [keras-tcn](https://github.com/philipperemy/keras-tcn). Like keras-tcn, the implementation of pytorch-tcn is based on the TCN architecture presented by [Bai et al.](https://arxiv.org/abs/1803.01271), while also including some features of the original [WaveNet](https://arxiv.org/pdf/1609.03499.pdf) architecture (e.g. skip connections) and the option for automatic reset of dilation sizes to allow training of very deep TCN structures.
+
+### Overview
 
 ```python
 from pytorch_tcn import TCN
@@ -68,11 +82,44 @@ The order of output dimensions will be the same as for the input tensors.
 - `embedding_shapes`: Accepts an Iterable that contains tuples or types that can be converted to tuples. The tuples should contain the number of embedding dimensions. Embedding can either be 1D, e.g., lets say you train a TCN to generate speech samples and you want to condition the audio generation on a speaker embedding of shape (256,). Then you would pass [(256,)] to the argument. The TCN forward function will then accept tensors of shape (batch_size, 256,) as the argument 'embedding'. The embeddings will be automatically broadcasted to the length of the input sequence and added to the input tensor right before the first activation function in each temporal block. Hence, 1D embedding shapes will lead to a global conditioning of the TCN. For local conditioning, an 'embedding_shapes' argument should be 2D including 'None' as its second dimension (time_steps). It may look like this: [(32,None)]. Then the forward function would accept tensors of shape (batch_size, 32, time_steps). If 'embedding_shapes' is set to None, no embeddings will be used.
 - `embedding_mode`: Valid modes are 'add' and 'concat'. If 'add', the embeddings will be added to the input tensor before the first activation function in each temporal block. If 'concat', the embeddings will be concatenated to the input tensor along the feature dimension and then projected to the expected dimension via a 1x1 convolution. The default is 'add'.
 - `use_gate`: If 'True', a gated linear unit (see [Dauphin et al.](https://arxiv.org/abs/1612.08083)) will be used as the first activation function in each temporal block. If 'False', the activation function will be the one specified by the 'activation' parameter. Gated units may be used as activation functions to feed in embeddings (see above). This may or may not lead to better results than the regular activation, but it is likely to increase the computational costs. The default is 'False'.
-- `lookahead`: If not 0, causal TCNs will use a lookahead on future time frames to increase the modelling accuracy. The lookahead parameter specifies the number of future time steps that will be processed influence the prediction for a specific time step. Default is 0. Will be ignored for non-causal networks which already have the maximum lookahead possible.
+- `lookahead`: Deprecated and must be set to 0. The parameter will be removed in a future release.
 - `output_projection`: If not None, the output of the TCN will be projected to the specified dimension via a 1x1 convolution. This may be useful if the output of the TCN is supposed to be of a different dimension than the input or if the last activation should be linear. If None, no projection will be performed. The default is 'None'.
 - `output_activation`: If not None, the output of the TCN will be passed through the specified activation function. This maybe useful to etablish a classification head via softmax etc. If None, no activation will be performed. The default is 'None'.
 
+
+## Causal Convolution
+
+Pytorch-TCN implements a causal convolutional layer that inherits from the PyTorch Conv1d layer and can be used as a drop-in replacement* for the PyTorch Conv1d layer. Note that padding does not need to be specified as it is calculated automaticallly from the kernel size and dilation rate. 
+
+```python
+from pytorch_tcn import TemporalConv1d
+
+conv = TemporalConv1d(
+    in_channels,
+    out_channels,
+    kernel_size,
+    stride = 1,
+    dilation = 1,
+    groups = 1,
+    bias = True,
+    buffer = None,
+    causal = True,
+    padding_mode = 'constant',
+    **kwargs,
+)
+
+# Forward call
+conv(
+    x, # Input tensor
+    inference=False, # Streaming on/off
+    in_buffer=None, # See ONNX Support for more details
+    )
+```
+
+
 ## Streaming Inference
+
+This package offers a streaming inference option for causal networks. This allows to process data in small blocks instead of the whole sequence, which is essential for real-time applications.
 
 For kernel sizes > 1, a TCN will always use zero padding to ensure that the output has the same number of time steps as the input. This leads to problems during blockwise processing: E.g. let [ X<sub>1</sub>, X<sub>2</sub>, X<sub>3</sub>, X<sub>4</sub> ] be an input sequence. With a kernel size of 3 and a dilation rate of 1, the padding length of the first convolutional layer would be 2. Hence, its input would look like this [ 0, 0, X<sub>1</sub>, X<sub>2</sub>, X<sub>3</sub>, X<sub>4</sub> ] (for a causal network). If the same sequence is divided into two chunks [ X<sub>1</sub>, X<sub>2</sub> ] and [ X<sub>3</sub>, X<sub>4</sub> ], the effective input would look like this [ 0, 0, X<sub>1</sub>, X<sub>2</sub>] + [ 0, 0, X<sub>3</sub>, X<sub>4</sub> ]. These discontinuities in the receptive field of the TCN will lead to different (and very likely degraded) outputs for the same input sequence divided into smaller chunks.
 
@@ -95,12 +142,9 @@ tcn = TCN(
 tcn.reset_buffers()
 
 # blockwise processing
+# in case of NCL input convention,
 # block should be of shape:
-# (1, block_size, num_inputs)
-for block in blocks:
-    out = tcn.inference(block)
-
-# or alternatively
+# (1, num_inputs, block_size)
 
 for block in blocks:
     out = tcn(block, inference=True)
@@ -108,24 +152,74 @@ for block in blocks:
 
 ### Lookahead
 
-Streaming inference does only make sense for causal networks. However, one may want to use a lookahead on future time frames to increase the modelling accuracy. This can be achieved by setting the lookahead parameter to a value greater than 0. The lookahead parameter specifies the number of future time steps that will be processed in addition to the input block.
+Streaming inference does only make sense for causal networks. However, one may want to use a lookahead on future time frames to increase the modelling accuracy. 
+
+<b>NOTE:</b> With version 1.2.0, the option for explicit lookahead was removed from the temporal covolutional layers in this package due to the fact that lookahead would add up with each layer, which is not desired in most cases.
+
+<b>Instead</b>, you should introduce lookahead by shifting the input or target sequences (i.e. present time steps are used to predict the past). This elegant implementation leads to an intrinsic lookahead which is distributed over the whole network. The inference procedure is then executed in the same way as in the case without lookahead.
 
 Note that lookahead will introduce <b>additional latency</b> in real-time applications.
 
+## ONNX Support
+
+In order to use trained TCN models in real-world applications, you may want to deploy the network in a non-Python environment. The Open Neural Network Exchange (ONNX) format is a great way to do this. The TCN class in this package is compatible with ONNX export. Here is an example of how to export a TCN model to ONNX. Note that ONNX models have no internal state, so you will have to manage the buffer state of the TCN model yourself as shown in the example below.
+
 ```python
+import onnxruntime as ort
+from pytorch_tcn import TemporalConv1d
 
-tcn = TCN(
-    num_inputs,
-    num_channels,
-    causal=True,
-    lookahead=1,
-)
+# Define an example model
+class ConvModel(nn.Module):
+    def __init__(self):
+        super(ConvModel, self).__init__()
+        self.conv_layer = TemporalConv1d(
+            in_channels = 3,
+            out_channels = 16,
+            kernel_size = 3,
+            stride = 1,
+            dilation = 1,
+            causal=True,
+            )
 
-tcn.reset_buffers()
+    def forward(self, x, in_buffer):
+        with torch.no_grad():
+            return self.conv_layer.inference(x, in_buffer)
 
-block # shape: (1, block_size + lookahead, num_inputs)
-output = tcn.inference(block)
+model = ConvModel()
 
-# output will be of shape:
-# (1, block_size, num_outputs)
-```
+# Initialize the buffer
+in_buffer = torch.zeros(1, in_channels, kernel_size - 1)
+
+# Define your input tensor
+input_tensor = torch.randn(1, 3, 32)
+input_slice = input_tensor[:, :, 0:1]
+
+
+# Export the model to ONNX
+torch.onnx.export(
+    model,
+    (input_slice, in_buffer),
+    "test_conv_model.onnx", 
+    input_names=['in_x', 'in_buffer'],
+    output_names=['out_x', 'out_buffer'], 
+    opset_version=9,
+    export_params=True,
+    )
+
+# Start inference
+ort_session = ort.InferenceSession(onnx_model_name)
+
+for t in range(0,input_tensor.shape[2]-1):
+    input_slice = input_tensor[:, :, t:t+1]
+                
+    output_slice, out_buffer = model(
+        input_slice,
+        in_buffer,
+        )
+    onnx_outputs = ort_session.run(
+        None,
+        {
+            'in_x': input_slice.numpy(),
+            'in_buffer': in_buffer.numpy(),
+            },
+        )
