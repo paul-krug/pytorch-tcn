@@ -195,15 +195,84 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             kernel_size,
             stride = 1,
             padding = 0,
+            output_padding = 0,
             groups = 1,
-            dilation = 1,
             bias = True,
+            dilation = 1,
+            padding_mode = 'zeros',
+            device=None,
+            dtype=None,
             buffer = None,
             causal = True,
             lookahead = 0,
-            padding_mode = 'constant',
-            **kwargs,
             ):
+        
+        # Padding is computed internally
+        if padding != 0:
+            if os.environ.get( 'PYTORCH_TCN_ALLOW_DROP_IN', 'Not set' ) == '0':
+                warnings.warn(
+                    """
+                    The value of arg 'padding' must be 0 for TemporalConv1d, because the correct amount
+                    of padding is calculated automatically based on the kernel size and dilation.
+                    The value of 'padding' will be ignored.
+                    """
+                    )
+            elif os.environ.get( 'PYTORCH_TCN_ALLOW_DROP_IN', 'Not set' ) == '1':
+                pass
+            else:
+                raise ValueError(
+                    """
+                    The value of arg 'padding' must be 0 for TemporalConv1d, because the correct amount
+                    of padding is calculated automatically based on the kernel size and dilation.
+                    If you want to suppress this error in order to use the layer as drop-in replacement
+                    for nn.Conv1d, set the environment variable 'PYTORCH_TCN_ALLOW_DROP_IN' to '0'
+                    (will reduce error to a warning) or '1' (will suppress the error/warning entirely).
+                    """
+                    )
+            
+        # dilation rate should be 1
+        if dilation != 1:
+            if os.environ.get( 'PYTORCH_TCN_ALLOW_DROP_IN', 'Not set' ) == '0':
+                warnings.warn(
+                    """
+                    The value of arg 'dilation' must be 1 for TemporalConvTranspose1d, other values are
+                    not supported. The value of 'dilation' will be ignored.
+                    """
+                    )
+            elif os.environ.get( 'PYTORCH_TCN_ALLOW_DROP_IN', 'Not set' ) == '1':
+                pass
+            else:
+                raise ValueError(
+                    """
+                    The value of arg 'dilation' must be 1 for TemporalConvTranspose1d, other values are
+                    not supported. If you want to suppress this error in order to use the layer as drop-in
+                    replacement for nn.ConvTranspose1d, set the environment variable 'PYTORCH_TCN_ALLOW_DROP_IN'
+                    to '0' (will reduce error to a warning) or '1' (will suppress the error/warning entirely).
+                    """
+                    )
+            
+        # output_padding should be 0
+        if output_padding != 0:
+            if os.environ.get( 'PYTORCH_TCN_ALLOW_DROP_IN', 'Not set' ) == '0':
+                warnings.warn(
+                    """
+                    The value of arg 'output_padding' must be 0 for TemporalConvTranspose1d, because the correct
+                    amount of padding is calculated automatically based on the kernel size and stride. The value
+                    of 'output_padding' will be ignored.
+                    """
+                    )
+            elif os.environ.get( 'PYTORCH_TCN_ALLOW_DROP_IN', 'Not set' ) == '1':
+                pass
+            else:
+                raise ValueError(
+                    """
+                    The value of arg 'output_padding' must be 0 for TemporalConvTranspose1d, because the correct
+                    amount of padding is calculated automatically based on the kernel size and stride. If you want
+                    to suppress this error in order to use the layer as drop-in replacement for nn.ConvTranspose1d,
+                    set the environment variable 'PYTORCH_TCN_ALLOW_DROP_IN' to '0' (will reduce error to a warning)
+                    or '1' (will suppress the error/warning entirely).
+                    """
+                    )
 
         # Lookahead is only kept for legacy reasons, ensure it is zero
         if lookahead != 0:
@@ -211,14 +280,6 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
                 """
                 The lookahead parameter is deprecated and must be set to 0.
                 The parameter will be removed in a future version.
-                """
-                )
-        
-        # Check padding mode
-        if padding_mode not in PADDING_MODES:
-            raise ValueError(
-                f"""
-                padding_mode must be one of {PADDING_MODES}, but got {padding_mode}.
                 """
                 )
 
@@ -230,12 +291,6 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
                 """
                 )
 
-        if padding != (kernel_size-stride)//2:
-            raise ValueError(
-                f"""
-                TemporalConvTranspose1d only supports padding=(kernel_size-stride)//2.
-                """
-                )
 
         self.causal = causal                      
         self.upsampling_factor = stride
@@ -255,12 +310,16 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             out_channels = out_channels,
             kernel_size = kernel_size,
             stride = stride,
-            padding = self.implicit_padding,
-            output_padding = 0,
+            padding = self.implicit_padding, # Padding is reimplemented in this class
+            output_padding = 0, # Output padding is not supported
             groups = groups,
             bias = bias,
-            **kwargs,
+            dilation = 1, # Dilation is not supported
+            padding_mode = 'zeros', # Padding mode is reimplemented in this class
+            device=device,
+            dtype=dtype,
             )
+        
 
         if buffer is None:
             buffer = torch.zeros(
@@ -273,7 +332,7 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             buffer,
             )
 
-        if padding_mode == 'constant':
+        if padding_mode == 'zeros':
             self.padder = nn.ConstantPad1d(
                     (self.pad_left, self.pad_right),
                     0.0,
@@ -286,6 +345,17 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             self.padder = nn.ReplicationPad1d(
                     (self.pad_left, self.pad_right),
                     )
+        elif padding_mode == 'circular':
+            self.padder = nn.CircularPad1d(
+                    (self.pad_left, self.pad_right),
+                    )
+        else:
+            raise ValueError(
+                f"""
+                padding_mode must be one of {PADDING_MODES},
+                but got {padding_mode}.
+                """
+                )
 
         return
 
