@@ -134,7 +134,7 @@ TemporalConv1d:
 - `kernel_size`
 - `stride`: Default is 1.
 - `padding`: Default value is 0. The parameter usually should not be set, because the correct amount of padding is calculated automatically. Values other than 0 will lead to an error. However, for the sake of drop-in compatibility with PyTorch Conv1d, you can ignore the error by setting the global flag "PYTORCH_TCN_ALLOW_DROP_IN" to "0" (reduces error to warining) or "1" (suppresses error/warning entirely). Note that even in this case the user input for "padding" will be ignored.
-- `dilation`: Default is 1. User input will be ignored, see parameter "padding" for further details.
+- `dilation`: Default is 1.
 - `groups`: Default is 1.
 - `bias`: Default is True.
 - `padding_mode`: Default is 'zeros'.
