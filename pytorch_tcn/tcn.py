@@ -424,7 +424,8 @@ class TCN(BaseTCN):
             # Only lookahead of 0 is supported, parameter is kept for compatibility
             raise ValueError(
                 """
-                The lookahead != 0 is not supported in this version of the TCN.
+                The lookahead parameter is deprecated and must be set to 0.
+                The parameter will be removed in a future version.
                 """
                 )
 

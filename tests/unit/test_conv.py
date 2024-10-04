@@ -17,7 +17,14 @@ class ConvolutionTest(unittest.TestCase):
         kernel_size = 3  # Size of the convolutional kernel
         stride = 1  # Stride value for the convolution
         dilation = 1  # Dilation value for the convolution
-        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, ((kernel_size - 1) * dilation) // 2, dilation, causal=True)
+        conv_layer = TemporalConv1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            dilation = dilation,
+            causal=True,
+            )
 
         self.assertEqual(conv_layer.buffer.shape, (1, in_channels, kernel_size - 1))  # Example assertion for buffer shape
 
@@ -51,7 +58,14 @@ class ConvolutionTest(unittest.TestCase):
         kernel_size = 3  # Size of the convolutional kernel
         stride = 1  # Stride value for the convolution
         dilation = 1  # Dilation value for the convolution
-        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, ((kernel_size - 1) * dilation) // 2, dilation, causal=True)
+        conv_layer = TemporalConv1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            dilation = dilation,
+            causal=True,
+            )
 
         self.assertEqual(conv_layer.buffer.shape, (1, in_channels, kernel_size - 1))  # Example assertion for buffer shape
 
@@ -87,7 +101,14 @@ class ConvolutionTest(unittest.TestCase):
         kernel_size = 3  # Size of the convolutional kernel
         stride = 1  # Stride value for the convolution
         dilation = 1  # Dilation value for the convolution
-        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, ((kernel_size - 1) * dilation) // 2, dilation, causal=True)
+        conv_layer = TemporalConv1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            dilation = dilation,
+            causal=True,
+            )
 
         class ConvModel(nn.Module):
             def __init__(self, conv_layer):
@@ -131,10 +152,24 @@ class ConvolutionTest(unittest.TestCase):
         kernel_size = 3  # Size of the convolutional kernel
         stride = 1  # Stride value for the convolution
         dilation = 1  # Dilation value for the convolution
-        conv_layer = TemporalConv1d(in_channels, out_channels, kernel_size, stride, dilation, causal=False)
+        conv_layer = TemporalConv1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            dilation = dilation,
+            causal=False,
+            )
 
         # Ensure that the results are the same as using a standard Conv1d layer
-        standard_conv_layer = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, dilation=dilation, padding=(kernel_size-1)//2)
+        standard_conv_layer = nn.Conv1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            dilation = dilation,
+            padding = ((kernel_size - 1) * dilation)//2,
+            )
 
         # Copy the weights and biases from the standard layer to the TCN layer
         conv_layer.weight = standard_conv_layer.weight
@@ -158,7 +193,13 @@ class ConvolutionTest(unittest.TestCase):
         out_channels = 16  # Number of output channels
         kernel_size = 8  # Size of the convolutional kernel
         stride = 4  # Stride value for the convolution
-        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding=(kernel_size-stride)//2, causal=True)
+        conv_layer = TemporalConvTranspose1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            causal=True,
+            )
 
         with torch.no_grad():
 
@@ -184,7 +225,13 @@ class ConvolutionTest(unittest.TestCase):
         out_channels = 16
         kernel_size = 8
         stride = 4
-        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding=(kernel_size-stride)//2, causal=True)
+        conv_layer = TemporalConvTranspose1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            causal=True,
+            )
 
         with torch.no_grad():
                 
@@ -215,7 +262,13 @@ class ConvolutionTest(unittest.TestCase):
         out_channels = 16
         kernel_size = 8
         stride = 4
-        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding=(kernel_size-stride)//2, causal=True)
+        conv_layer = TemporalConvTranspose1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            causal=True,
+            )
 
         class ConvModel(nn.Module):
             def __init__(self, conv_layer):
@@ -257,10 +310,22 @@ class ConvolutionTest(unittest.TestCase):
         out_channels = 16
         kernel_size = 4
         stride = 2
-        conv_layer = TemporalConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding=(kernel_size-stride)//2, causal=False)
+        conv_layer = TemporalConvTranspose1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            causal=False,
+            )
 
         # Ensure that the results are the same as using a standard ConvTranspose1d layer
-        standard_conv_layer = nn.ConvTranspose1d(in_channels, out_channels, kernel_size, stride=stride, padding=(kernel_size-stride)//2)
+        standard_conv_layer = nn.ConvTranspose1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            padding = (kernel_size-stride)//2,
+            )
 
         # Copy the weights and biases from the standard layer to the TCN layer
         conv_layer.weight = standard_conv_layer.weight
