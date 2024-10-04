@@ -89,32 +89,82 @@ The order of output dimensions will be the same as for the input tensors.
 
 ## Causal Convolution
 
-Pytorch-TCN implements a causal convolutional layer that inherits from the PyTorch Conv1d layer and can be used as a drop-in replacement* for the PyTorch Conv1d layer. Note that padding does not need to be specified as it is calculated automaticallly from the kernel size and dilation rate. 
+Pytorch-TCN implements a causal convolutional layer that inherits from the PyTorch Conv1d layer and can be used as a drop-in replacement* for the PyTorch Conv1d layer.
+
+*See the parameter 'padding' below for further details.
 
 ```python
 from pytorch_tcn import TemporalConv1d
+from pytorch_tcn import TemporalConvTranspose1d
 
 conv = TemporalConv1d(
     in_channels,
     out_channels,
     kernel_size,
-    stride = 1,
-    dilation = 1,
-    groups = 1,
-    bias = True,
-    buffer = None,
-    causal = True,
-    padding_mode = 'constant',
     **kwargs,
 )
 
-# Forward call
+conv_t = TemporalConvTranspose1d(
+    in_channels,
+    out_channels,
+    kernel_size,
+    **kwargs,
+)
+
+# Forward calls
 conv(
     x, # Input tensor
     inference=False, # Streaming on/off
     in_buffer=None, # See ONNX Support for more details
     )
+
+conv_t(
+    x, # Input tensor
+    inference=False, # Streaming on/off
+    in_buffer=None, # See ONNX Support for more details
+    )
 ```
+
+### Parameters
+
+TemporalConv1d:
+
+- `in_channels`
+- `out_channels`
+- `kernel_size`
+- `stride`: Default is 1.
+- `padding`: Default value is 0. The parameter usually should not be set, because the correct amount of padding is calculated automatically. Values other than 0 will lead to an error. However, for the sake of drop-in compatibility with PyTorch Conv1d, you can ignore the error by setting the global flag "PYTORCH_TCN_ALLOW_DROP_IN" to "0" (reduces error to warining) or "1" (suppresses error/warning entirely). Note that even in this case the user input for "padding" will be ignored.
+- `dilation`: Default is 1. User input will be ignored, see parameter "padding" for further details.
+- `groups`: Default is 1.
+- `bias`: Default is True.
+- `padding_mode`: Default is 'zeros'.
+- `device`: Default is None.
+- `dtype`: Default is None.
+- `buffer`: Use this if you explicitly want to initalize the internal buffer with something else than zeros. Default is None.
+- `causal`: Set this to True if you want a causal convolution. False will lead to a non-causal temporal convolution. Default is True.
+- `lookahead`: Deprecated and must be set to 0. The parameter will be removed in a future release. Default is 0.
+
+<br>
+
+TemporalConvTranspose1d:
+
+
+- `in_channels`
+- `out_channels`
+- `kernel_size`
+- `stride`: Default is 1.
+- `padding`: Default value is 0. The parameter usually should not be set, because the correct amount of padding is calculated automatically. Values other than 0 will lead to an error. However, for the sake of drop-in compatibility with PyTorch ConvTranspose1d, you can ignore the error by setting the global flag "PYTORCH_TCN_ALLOW_DROP_IN" to "0" (reduces error to warining) or "1" (suppresses error/warning entirely). Note that even in this case the user input for "padding" will be ignored.
+- `output_padding`: Default is 0. User input will be ignored, see parameter "padding" for further details.
+- `groups`: Default is 1.
+- `bias`: Default is True.
+- `dilation`: Default is 1. User input will be ignored, see parameter "padding" for further details.
+- `padding_mode`: Default is 'zeros'.
+- `device`: Default is None.
+- `dtype`: Default is None.
+- `buffer`: Use this if you explicitly want to initalize the internal buffer with something else than zeros. Default is None.
+- `causal`: Set this to True if you want a causal convolution. False will lead to a non-causal temporal convolution. Default is True.
+- `lookahead`: Deprecated and must be set to 0. The parameter will be removed in a future release. Default is 0.
+
 
 
 ## Streaming Inference
