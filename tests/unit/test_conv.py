@@ -162,7 +162,14 @@ class ConvolutionTest(unittest.TestCase):
             )
 
         # Ensure that the results are the same as using a standard Conv1d layer
-        standard_conv_layer = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, dilation=dilation, padding=(kernel_size-1)//2)
+        standard_conv_layer = nn.Conv1d(
+            in_channels = in_channels,
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            stride = stride,
+            dilation = dilation,
+            padding = ((kernel_size - 1) * dilation)//2,
+            )
 
         # Copy the weights and biases from the standard layer to the TCN layer
         conv_layer.weight = standard_conv_layer.weight
