@@ -242,11 +242,13 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
                 """
                 )
 
-        # This implementation only supports kernel_size == 2 * stride with power of 2 strides
-        if kernel_size != 2 * stride or not math.log2(stride).is_integer() or stride < 2:
+        # This implementation only supports kernel_size == 2 * stride
+        if kernel_size != 2 * stride:
             raise ValueError(
                 f"""
-                This implementation only supports kernel_size == 2 * stride with power of 2 strides and stride >= 2.
+                This implementation of TemporalConvTranspose1d only
+                supports kernel_size == 2 * stride, but got 
+                kernel_size = {kernel_size} and stride = {stride}.
                 """
                 )
 
