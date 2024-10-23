@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import math
 
-from .utils import BufferIO
+from .buffer import BufferIO
 
 from typing import Optional
 from typing import Union
@@ -23,6 +23,7 @@ class TemporalPad1d(nn.Module):
             self,
             padding: int,
             in_channels: int,
+            buffer: Optional[ Union[ float, torch.Tensor ] ] = None,
             padding_mode: str = 'zeros',
             causal: bool = False,
             ):
@@ -81,6 +82,18 @@ class TemporalPad1d(nn.Module):
                 1,
                 in_channels,
                 self.pad_len,
+                )
+        elif isinstance(buffer, (int, float)):
+            buffer = torch.full(
+                size = (1, in_channels, self.pad_len),
+                fill_value = buffer,
+            )
+        elif not isinstance(buffer, torch.Tensor):
+            raise ValueError(
+                f"""
+                The argument 'buffer' must be None or of type float,
+                int, or torch.Tensor, but got {type(buffer)}.
+                """
                 )
         
         # Register buffer as a persistent buffer which is available as self.buffer

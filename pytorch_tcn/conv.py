@@ -5,7 +5,7 @@ import torch.nn as nn
 import math
 
 from .pad import TemporalPad1d
-from .utils import BufferIO
+from .buffer import BufferIO
 
 from typing import Optional
 from typing import Union
@@ -77,39 +77,29 @@ class TemporalConv1d(nn.Conv1d):
                 """
                 )
 
-
         self.pad_len = (kernel_size - 1) * dilation
         self.causal = causal
-
-        #if causal:
-        #    # Padding is only on the left side
-        #    self.left_pad = self.pad_len
-        #    self.right_pad = 0
-        #else:
-        #    # Padding is on both sides
-        #    self.left_pad = self.pad_len // 2
-        #    self.right_pad = self.pad_len - self.left_pad
         
         self.padder = TemporalPad1d(
             padding = self.pad_len,
             in_channels = in_channels,
+            buffer = buffer,
             padding_mode = padding_mode,
             causal = causal,
             )
         
-        # Deprecated in pytorch-tcn >= 1.2.2
-        # Keep for backwards compatibility to load old model weights
-        if buffer is None:
-            buffer = torch.zeros(
-                1,
-                in_channels,
-                self.pad_len,
-                )
-        self.register_buffer(
-            'buffer',
-            buffer,
-            )
-        
+        return
+    
+    # In pytorch-tcn >= 1.2.2, buffer is moved to TemporalPad1d
+    # We keep the property for backwards compatibility, e.g. in
+    # case one wants to load old model weights.
+    @property
+    def buffer(self):
+        return self.padder.buffer
+    
+    @buffer.setter
+    def buffer(self, value):
+        self.padder.buffer = value
         return
 
     def forward(
