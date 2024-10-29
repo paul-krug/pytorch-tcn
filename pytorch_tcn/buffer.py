@@ -4,7 +4,7 @@ import torch
 from typing import Optional
 from typing import Union
 from typing import List
-from abc import Iterable
+from collections.abc import Iterable
 
 
 class BufferIO():
@@ -13,8 +13,10 @@ class BufferIO():
             in_buffers: Optional[ Iterable ] = None,
             ):
         if in_buffers is not None:
+            self.in_buffers_length = len( in_buffers )
             self.in_buffers = iter( in_buffers )
         else:
+            self.in_buffers_length = None
             self.in_buffers = None
         
         self.out_buffers = []
@@ -42,6 +44,12 @@ class BufferIO():
         return self.__next__()
         
     def step(self):
+        if len( self.out_buffers ) != self.in_buffers_length:
+            raise ValueError(
+                """
+                Number of out buffers does not match number of in buffers.
+                """
+                )
         self.in_buffers = iter( self.out_buffers )
         self.out_buffers = []
         return
