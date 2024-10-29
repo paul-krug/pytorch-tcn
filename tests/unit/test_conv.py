@@ -455,7 +455,6 @@ class ConvolutionTest(unittest.TestCase):
 
         # Test that onnx matches reference (full inference)
         assert(torch.allclose(out_tensor, torch.cat(onnx_stream, dim=2), atol=1e-5))
-        #assert(torch.allclose(output_slice, onnx_output_slice, atol=1e-5))
             
         return
 
