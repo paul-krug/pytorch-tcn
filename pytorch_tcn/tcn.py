@@ -61,14 +61,24 @@ def _check_activation_arg(
                 torch.nn.Module object as the 'activation' argument.
                 """
                 )
-    elif not isinstance( activation, nn.Module ):
-        raise ValueError(
-            f"""
-            The argument '{arg_name}' must either be a valid string or
-            a torch.nn.Module object, but {activation} was passed,
-            which is of type {type(activation)}.
-            """
-            )
+    else:
+        try:
+            if not isinstance( activation(), nn.Module ):
+                raise ValueError(
+                    f"""
+                    The argument '{arg_name}' must either be a valid string or
+                    a torch.nn.Module object, but an object of type {type(activation())}
+                    was passed.
+                    """
+                    )
+        except:
+            raise ValueError(
+                f"""
+                The argument '{arg_name}' must either be a valid string or
+                a torch.nn.Module object, but an object of type {type(activation)}
+                was passed.
+                """
+                )
     return
 
 def _check_generic_input_arg(
@@ -89,9 +99,12 @@ def get_kernel_init_fn(
         name: str,
         activation: str,
         ) -> Tuple[ nn.Module, dict ]:
-    if isinstance( activation, nn.Module ):
-        return kernel_init_fn[ name ], dict()
-    # TODO: this means no gain is used for custom activation functions
+    try:
+        if isinstance( activation(), nn.Module ):
+            return kernel_init_fn[ name ], dict()
+        # TODO: this means no gain is used for custom activation functions
+    except:
+        pass
         
     if name not in kernel_init_fn.keys():
         raise ValueError(

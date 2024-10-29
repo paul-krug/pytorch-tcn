@@ -114,6 +114,13 @@ class TestTCN(unittest.TestCase):
                 expected_error = None,
             ),
             dict(
+                kwargs = dict(
+                    activation = [torch.nn.SiLU],
+                    use_gate = [False],
+                    ),
+                expected_error = None,
+            ),
+            dict(
                 kwargs = dict( activation = [ 'invalid' ] ),
                 expected_error = ValueError,
             ),
