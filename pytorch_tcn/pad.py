@@ -129,6 +129,9 @@ class TemporalPad1d(nn.Module):
             in_buffer = self.buffer
         else:
             in_buffer = buffer_io.next_in_buffer()
+            if in_buffer is None:
+                in_buffer = self.buffer
+                buffer_io.append_internal_buffer( in_buffer )
 
         x = torch.cat(
             (in_buffer, x),
