@@ -20,6 +20,7 @@ class BufferIO():
             self.in_buffers = None
         
         self.out_buffers = []
+        self.internal_buffers = []
         return
     
     def __iter__(self):
@@ -37,6 +38,13 @@ class BufferIO():
             ):
         self.out_buffers.append(x)
         return
+    
+    def append_internal_buffer(
+            self,
+            x: torch.Tensor,
+            ):
+        self.internal_buffers.append(x)
+        return
         
     def next_in_buffer(
             self,
@@ -44,6 +52,10 @@ class BufferIO():
         return self.__next__()
         
     def step(self):
+        # If in_buffers is None, then the internal buffers are used as input
+        # After the first step, the operation will continue as usual
+        if self.in_buffers is None:
+            self.in_buffers_length = len( self.internal_buffers)
         if len( self.out_buffers ) != self.in_buffers_length:
             raise ValueError(
                 """
