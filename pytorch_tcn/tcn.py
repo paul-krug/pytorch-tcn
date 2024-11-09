@@ -23,6 +23,7 @@ from typing import Union
 from typing import Optional
 from collections.abc import Iterable
 from pytorch_tcn.conv import TemporalConv1d, TemporalConvTranspose1d
+from pytorch_tcn.pad import TemporalPad1d
 from pytorch_tcn.buffer import BufferIO
 
 
@@ -172,7 +173,7 @@ class BaseTCN(nn.Module):
     
     def reset_buffers(self):
         def _reset_buffer(x):
-            if isinstance(x, (TemporalConv1d, TemporalConvTranspose1d) ):
+            if isinstance(x, (TemporalPad1d,) ):
                 x.reset_buffer()
         self.apply(_reset_buffer)
         return
@@ -183,7 +184,7 @@ class BaseTCN(nn.Module):
         """
         buffers = []
         def _get_buffers(x):
-            if isinstance(x, (TemporalConv1d, TemporalConvTranspose1d) ):
+            if isinstance(x, (TemporalPad1d,) ):
                 buffers.append(x.buffer)
         self.apply(_get_buffers)
         return buffers
@@ -214,7 +215,7 @@ class BaseTCN(nn.Module):
         Set all buffers of the network in the order they were created.
         """
         def _set_buffers(x):
-            if isinstance(x, (TemporalConv1d, TemporalConvTranspose1d) ):
+            if isinstance(x, (TemporalPad1d,) ):
                 x.buffer = buffers.pop(0)
         self.apply(_set_buffers)
         return
