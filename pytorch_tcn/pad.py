@@ -78,16 +78,28 @@ class TemporalPad1d(nn.Module):
         
         # Buffer is used for streaming inference
         if buffer is None:
-            buffer = torch.zeros(
-                1,
-                in_channels,
-                self.pad_len,
-                )
+            if in_channels is None:
+                buffer = torch.zeros(
+                    1,
+                    self.pad_len,
+                    )
+            else:
+                buffer = torch.zeros(
+                    1,
+                    in_channels,
+                    self.pad_len,
+                    )
         elif isinstance(buffer, (int, float)):
-            buffer = torch.full(
-                size = (1, in_channels, self.pad_len),
-                fill_value = buffer,
-            )
+            if in_channels is None:
+                buffer = torch.full(
+                    size = (1, self.pad_len),
+                    fill_value = buffer,
+                    )
+            else:
+                buffer = torch.full(
+                    size = (1, in_channels, self.pad_len),
+                    fill_value = buffer,
+                    )
         elif not isinstance(buffer, torch.Tensor):
             raise ValueError(
                 f"""
@@ -138,7 +150,7 @@ class TemporalPad1d(nn.Module):
             -1,
             )
 
-        out_buffer = x[:, :, -self.pad_len: ]
+        out_buffer = x[ ..., -self.pad_len: ]
         if buffer_io is None:
             self.buffer = out_buffer
         else:
@@ -160,7 +172,7 @@ class TemporalPad1d(nn.Module):
     
     def reset_buffer(self):
         self.buffer.zero_()
-        if self.buffer.shape[2] != self.pad_len:
+        if self.buffer.shape[-1] != self.pad_len:
             raise ValueError(
                 f"""
                 Buffer shape {self.buffer.shape} does not match the expected
