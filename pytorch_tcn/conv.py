@@ -332,3 +332,61 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
     def reset_buffer(self):
         self.padder.reset_buffer()
 
+
+class DepthwiseConv1d( TemporalConv1d ):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride = 1,
+            padding = 0,
+            dilation = 1,
+            #groups = 1, # groups is set to in_channels in this class
+            bias = True,
+            padding_mode='zeros',
+            device=None,
+            dtype=None,
+            #buffer = None,
+            causal = True,
+            #lookahead = 0, # lookahead is not supported in this class
+            ):
+        super(DepthwiseConv1d).__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride = stride,
+            padding = padding,
+            dilation = dilation,
+            groups = in_channels,
+            bias = bias,
+            padding_mode = padding_mode,
+            device = device,
+            dtype = dtype,
+            causal = causal,
+            )
+        return
+    
+class PointwiseConv1d( nn.Conv1d ):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            bias = True,
+            device=None,
+            dtype=None,
+            ):
+        super(PointwiseConv1d).__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=1,
+            bias=bias,
+            padding_mode='zeros',
+            device=device,
+            dtype=dtype,
+            )
+        return
