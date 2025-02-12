@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import math
 
-from .buffer import BufferIO
+from .buffer import BufferIO, InternalBuffer
 
 from typing import Optional
 from typing import Union
@@ -18,7 +18,7 @@ PADDING_MODES = [
     'circular',
 ]
 
-class TemporalPad1d(nn.Module):
+class TemporalPad1d(nn.Module, InternalBuffer):
     def __init__(
             self,
             padding: int,

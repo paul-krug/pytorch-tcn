@@ -6,6 +6,9 @@ from typing import Union
 from typing import List
 from collections.abc import Iterable
 
+class InternalBuffer():
+    # Parent class that requires that there is a buffer attribute
+    pass
 
 class BufferIO():
     def __init__(
