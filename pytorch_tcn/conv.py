@@ -131,10 +131,14 @@ class TemporalConv1d(nn.Conv1d):
             )
         return
     
-    def reset_buffer(self):
-        self.padder.reset_buffer()
+    def reset_buffer(self, batch_size: int = 1):
+        """
+        Reset the internal history buffer.
+        If you plan to process N parallel real‑time streams in the next
+        call(s) pass batch_size=N so the buffer is resized accordingly.
+        """
+        self.padder.reset_buffer(batch_size=batch_size)
         return
-
 
 class TemporalConvTranspose1d(nn.ConvTranspose1d):
     def __init__(
@@ -329,6 +333,7 @@ class TemporalConvTranspose1d(nn.ConvTranspose1d):
             )
         return
     
-    def reset_buffer(self):
-        self.padder.reset_buffer()
+    def reset_buffer(self, batch_size: int = 1):
+        self.padder.reset_buffer(batch_size=batch_size)
+        return
 

@@ -129,28 +129,38 @@ class TemporalPad1d(nn.Module):
                 """
                 )
 
-        if x.shape[0] != 1:
+        batch_size = x.size(0)
+
+        def _align_buffer(buf: torch.Tensor, name: str) -> torch.Tensor:
+            # buf is None  -> handled by caller
+            if buf is None:
+                return None
+            if buf.size(0) == batch_size:
+                return buf
+            if buf.size(0) == 1:
+                # replicate the single history for every element in the batch
+                return buf.repeat(batch_size, 1, 1)
             raise ValueError(
-                f"""
-                Streaming inference requires a batch size
-                of 1, but batch size is {x.shape[0]}.
-                """
-                )
+                f"Batch mismatch between input (N={batch_size}) and "
+                f"{name} (N={buf.size(0)}).  Either supply a buffer of the "
+                f"same batch size or call .reset_buffer(batch_size=N)."
+            )
+                
         
         if buffer_io is None:
-            in_buffer = self.buffer
+            in_buffer = _align_buffer(self.buffer, 'internal buffer')
         else:
             in_buffer = buffer_io.next_in_buffer()
-            if in_buffer is None:
+            if in_buffer is None:            # first iteration, fall back
                 in_buffer = self.buffer
-                buffer_io.append_internal_buffer( in_buffer )
-
-        x = torch.cat(
-            (in_buffer, x),
-            -1,
-            )
-
-        out_buffer = x[ ..., -self.pad_len: ]
+            in_buffer = _align_buffer(in_buffer, 'in_buffer from BufferIO')
+            buffer_io.append_internal_buffer(in_buffer)
+        
+        # pad the current input with the previous history
+        x = torch.cat((in_buffer, x), dim=-1)
+        
+        # remember the most recent history for the *next* call
+        out_buffer = x[..., -self.pad_len:]
         if buffer_io is None:
             self.buffer = out_buffer
         else:
@@ -170,12 +180,25 @@ class TemporalPad1d(nn.Module):
             x = self.pad(x)
         return x
     
-    def reset_buffer(self):
-        self.buffer.zero_()
-        if self.buffer.shape[-1] != self.pad_len:
-            raise ValueError(
-                f"""
-                Buffer shape {self.buffer.shape} does not match the expected
-                shape (1, {self.in_channels}, {self.pad_len}).
-                """
+    def reset_buffer(self, batch_size: int = 1) -> None:
+            """
+            Reset the streaming buffer to zeros.
+        
+            Parameters
+            ----------
+            batch_size : int, default 1
+                Number of parallel streams that will be processed in the next
+                call(s).  If this differs from the current buffer’s batch
+                dimension, the buffer is re‑allocated accordingly.
+            """
+            if self.buffer.size(0) != batch_size:
+                self.buffer = torch.zeros(
+                    batch_size,
+                    self.buffer.size(1),      # channels
+                    self.pad_len,
+                    device=self.buffer.device,
+                    dtype=self.buffer.dtype,
                 )
+            else:
+                self.buffer.zero_()
+            return

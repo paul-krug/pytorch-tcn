@@ -171,12 +171,22 @@ class BaseTCN(nn.Module):
 
         return
     
-    def reset_buffers(self):
-        def _reset_buffer(x):
-            if isinstance(x, (TemporalPad1d,) ):
-                x.reset_buffer()
-        self.apply(_reset_buffer)
-        return
+    def reset_buffers(self, batch_size: int = 1):
+            """
+            Reset the streaming buffers of every TemporalPad1d module.
+    
+            Parameters
+            ----------
+            batch_size : int, default 1
+                Number of parallel streams that will be processed in the next
+                inference call(s).  The underlying padders re‑allocate their
+                buffer if the size does not match.
+            """
+            def _reset_buffer(x):
+                if isinstance(x, (TemporalPad1d,) ):
+                    x.reset_buffer(batch_size=batch_size)
+            self.apply(_reset_buffer)
+            return
     
     def get_buffers(self):
         """
